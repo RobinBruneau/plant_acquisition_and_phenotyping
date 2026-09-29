@@ -4,6 +4,7 @@ import json
 import subprocess
 import tkinter as tk
 import time
+from datetime import datetime, date
 from PIL import Image, ImageTk
 import pyautogui
 import numpy as np
@@ -11,9 +12,16 @@ import numpy as np
 # ==========================================
 # CONFIGURATION
 # ==========================================
-DOSSIER_SAUVEGARDE = os.path.join(os.path.expanduser("~"), "Acquisitions")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DOSSIER_SAUVEGARDE = os.path.join(BASE_DIR, "data")
+
 FICHIER_WEB = "index.html"
-FICHIER_CALIBRATION = "calibration_zones.json"
+FICHIER_CALIBRATION = os.path.join(BASE_DIR, "calibration_zones.json")
+
+# Configuration Rclone (Remote: "geneva")
+RCLONE_REMOTE_NAME = "geneva"
+RCLONE_REMOTE_FOLDER = "Acquisitions"  # Dossier cible sur le cloud
+RCLONE_REMOTE_PATH = f"{RCLONE_REMOTE_NAME}:{RCLONE_REMOTE_FOLDER}"
 
 # 5 Zones
 ZONES_CONFIG = [
@@ -73,34 +81,6 @@ def charger_zones():
 
 
 # ==========================================
-# VISUAL INDICATOR (Red Circle)
-# ==========================================
-def afficher_cercle_rouge(cx, cy, rayon=28, duree_ms=300):
-    popup = tk.Toplevel()
-    popup.overrideredirect(True)
-    popup.attributes('-topmost', True)
-
-    try:
-        popup.attributes('-transparentcolor', 'gray')
-        bg_color = 'gray'
-    except Exception:
-        bg_color = 'white'
-
-    taille = rayon * 2
-    x = cx - rayon
-    y = cy - rayon
-    popup.geometry(f"{taille}x{taille}+{x}+{y}")
-
-    canvas = tk.Canvas(popup, width=taille, height=taille, bg=bg_color, highlightthickness=0)
-    canvas.pack()
-    canvas.create_oval(3, 3, taille - 3, taille - 3, fill="#f44336", outline="white", width=4)
-
-    popup.update()
-    time.sleep(duree_ms / 1000.0)
-    popup.destroy()
-
-
-# ==========================================
 # CALIBRATION EDITOR (Static Panel on the Right)
 # ==========================================
 class EditeurCalibration(tk.Toplevel):
@@ -143,7 +123,6 @@ class EditeurCalibration(tk.Toplevel):
         self.bind("<Escape>", lambda e: self.annuler())
 
     def _dessiner_panneau_droite(self):
-        # Position identical to Main Window (Top-Right, Width=675px)
         x1 = self.screen_w - 700
         y1 = 20
         x2 = x1 + 675
@@ -161,7 +140,7 @@ class EditeurCalibration(tk.Toplevel):
         )
         self.canvas.create_text(
             (x1 + x2) // 2, y1 + 60,
-            text="⚙️ CALIBRATION MODE", fill="white", font=("Segoe UI", 16, "bold")
+            text="CALIBRATION MODE", fill="white", font=("Segoe UI", 16, "bold")
         )
 
         # 2. Card: Zone Color Legend
@@ -201,7 +180,7 @@ class EditeurCalibration(tk.Toplevel):
         self.canvas.create_text(
             (self.btn_save_coords[0] + self.btn_save_coords[2]) // 2,
             (self.btn_save_coords[1] + self.btn_save_coords[3]) // 2,
-            text="✔ Save Calibration (Enter)", fill="white", font=("Segoe UI", 16, "bold")
+            text="Save Calibration (Enter)", fill="white", font=("Segoe UI", 16, "bold")
         )
 
         # 4. Cancel Button (Dark Grey)
@@ -216,7 +195,7 @@ class EditeurCalibration(tk.Toplevel):
         self.canvas.create_text(
             (self.btn_cancel_coords[0] + self.btn_cancel_coords[2]) // 2,
             (self.btn_cancel_coords[1] + self.btn_cancel_coords[3]) // 2,
-            text="✖ Cancel (Esc)", fill="white", font=("Segoe UI", 14, "bold")
+            text="Cancel (Esc)", fill="white", font=("Segoe UI", 14, "bold")
         )
 
     def _initialiser_rectangles(self):
@@ -260,15 +239,11 @@ class EditeurCalibration(tk.Toplevel):
     def on_press(self, event):
         x, y = event.x, event.y
 
-        # Check click on Save button
-        if self.btn_save_coords[0] <= x <= self.btn_save_coords[2] and self.btn_save_coords[1] <= y <= \
-                self.btn_save_coords[3]:
+        if self.btn_save_coords[0] <= x <= self.btn_save_coords[2] and self.btn_save_coords[1] <= y <= self.btn_save_coords[3]:
             self.valider()
             return
 
-        # Check click on Cancel button
-        if self.btn_cancel_coords[0] <= x <= self.btn_cancel_coords[2] and self.btn_cancel_coords[1] <= y <= \
-                self.btn_cancel_coords[3]:
+        if self.btn_cancel_coords[0] <= x <= self.btn_cancel_coords[2] and self.btn_cancel_coords[1] <= y <= self.btn_cancel_coords[3]:
             self.annuler()
             return
 
@@ -376,15 +351,13 @@ def get_coords_zone(zone_id):
     return cx, cy, x1, y1, x2, y2
 
 
-def cliquer_zone(zone_id, simuler_visuel=True):
+def cliquer_zone(zone_id):
     coords = get_coords_zone(zone_id)
     if not coords:
         return False, f"Zone '{zone_id}' not calibrated."
     cx, cy, _, _, _, _ = coords
 
     try:
-        if simuler_visuel:
-            afficher_cercle_rouge(cx, cy, rayon=28, duree_ms=250)
         pyautogui.click(cx, cy)
         return True, (cx, cy)
     except Exception as e:
@@ -392,7 +365,7 @@ def cliquer_zone(zone_id, simuler_visuel=True):
 
 
 def saisir_texte_zone(zone_id, texte):
-    succes, msg = cliquer_zone(zone_id, simuler_visuel=True)
+    succes, msg = cliquer_zone(zone_id)
     if not succes:
         return False, msg
 
@@ -449,14 +422,14 @@ def attendre_retour_vert(zone_id, timeout_sec=15):
 
 def definir_etat_acquisition(en_cours):
     if en_cours:
-        lbl_etat.config(text="● ACQUISITION IN PROGRESS", bg="#f44336", fg="white")
+        lbl_etat.config(text="ACQUISITION IN PROGRESS", bg="#f44336", fg="white")
     else:
-        lbl_etat.config(text="● STANDBY / READY", bg="#4caf50", fg="white")
+        lbl_etat.config(text="STANDBY / READY", bg="#4caf50", fg="white")
     app.update()
 
 
 # ==========================================
-# ACQUISITION SEQUENCE
+# ACQUISITION SEQUENCE (Folder + spec.txt)
 # ==========================================
 def lancer_acquisition(event=None):
     nom_acq = entree_nom.get().strip()
@@ -465,11 +438,10 @@ def lancer_acquisition(event=None):
         afficher_status("Error: Please enter an acquisition name.", "#e57373")
         return
 
-    nom_fichier = f"{nom_acq}.txt"
-    chemin_fichier = os.path.join(DOSSIER_SAUVEGARDE, nom_fichier)
-
-    if os.path.exists(chemin_fichier):
-        afficher_status(f"Error: '{nom_fichier}' already exists.", "#e57373")
+    # Check if folder already exists in ./data/
+    dossier_acq = os.path.join(DOSSIER_SAUVEGARDE, nom_acq)
+    if os.path.exists(dossier_acq):
+        afficher_status(f"Error: Folder '{nom_acq}' already exists in ./data/.", "#e57373")
         entree_nom.focus_set()
         return
 
@@ -527,17 +499,21 @@ def lancer_acquisition(event=None):
         definir_etat_acquisition(False)
         return
 
-    # Final Step: Saving File
-    afficher_status("Saving file...", "#e0e0e0")
+    # Final Step: Saving File in ./data/<nom_acq>/spec.txt
+    afficher_status(f"Saving spec.txt in ./data/{nom_acq}/...", "#e0e0e0")
     app.update()
 
     try:
-        with open(chemin_fichier, "w", encoding="utf-8") as f:
+        os.makedirs(dossier_acq, exist_ok=True)
+        fichier_spec = os.path.join(dossier_acq, "spec.txt")
+
+        with open(fichier_spec, "w", encoding="utf-8") as f:
             f.write(f"Acquisition Name: {nom_acq}\n")
+            f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write("part-0-180 done\n")
             f.write("part-180-360 done\n")
 
-        afficher_status(f"Success! File '{nom_fichier}' created!", "#81c784")
+        afficher_status(f"Success! Folder './data/{nom_acq}' and spec.txt created!", "#81c784")
         entree_nom.delete(0, tk.END)
     except Exception as e:
         afficher_status(f"Creation Error: {e}", "#e57373")
@@ -548,6 +524,154 @@ def lancer_acquisition(event=None):
 
 def afficher_status(texte, couleur):
     lbl_status.config(text=texte, fg=couleur)
+
+
+# ==========================================
+# INLINE CLOUD TRANSFER EXPANSION LOGIC
+# ==========================================
+cloud_expanded = False
+dossiers_du_jour = []
+items_selection = {}
+
+def recuperer_dossiers_du_jour():
+    dossiers_aujourdhui = []
+    aujourdhui = date.today()
+
+    if not os.path.exists(DOSSIER_SAUVEGARDE):
+        return dossiers_aujourdhui
+
+    for item in os.listdir(DOSSIER_SAUVEGARDE):
+        item_path = os.path.join(DOSSIER_SAUVEGARDE, item)
+        if os.path.isdir(item_path):
+            mtime = date.fromtimestamp(os.path.getmtime(item_path))
+            if mtime == aujourdhui:
+                dossiers_aujourdhui.append(item)
+
+    return sorted(dossiers_aujourdhui)
+
+
+def toggle_cloud_expansion():
+    global cloud_expanded
+    sw, sh = pyautogui.size()
+    pos_x = sw - 700
+    pos_y = 20
+
+    if not cloud_expanded:
+        app.geometry(f"675x1350+{pos_x}+{pos_y}")
+        charger_fichiers_cloud_inline()
+        frame_cloud_content.pack(fill=tk.BOTH, expand=True, padx=24, pady=(0, 12))
+        btn_cloud.config(text="Close Cloud Transfer")
+        cloud_expanded = True
+    else:
+        frame_cloud_content.pack_forget()
+        app.geometry(f"675x900+{pos_x}+{pos_y}")
+        btn_cloud.config(text="Save to Cloud")
+        cloud_expanded = False
+
+
+def maj_style_bouton_item(folder_name):
+    info = items_selection[folder_name]
+    btn = info['button']
+    is_sel = info['selected']
+
+    if is_sel:
+        btn.config(
+            text=f"  [X]   {folder_name}/",
+            bg="#2e7d32", fg="#ffffff",
+            activebackground="#388e3c", activeforeground="#ffffff",
+            relief=tk.SOLID, bd=1, highlightbackground="#4caf50"
+        )
+    else:
+        btn.config(
+            text=f"  [  ]   {folder_name}/",
+            bg="#252538", fg="#78909c",
+            activebackground="#2c2c42", activeforeground="#b0bec5",
+            relief=tk.FLAT, bd=0
+        )
+
+
+def toggle_item(folder_name):
+    items_selection[folder_name]['selected'] = not items_selection[folder_name]['selected']
+    maj_style_bouton_item(folder_name)
+
+
+def select_all_items():
+    for folder_name in items_selection:
+        items_selection[folder_name]['selected'] = True
+        maj_style_bouton_item(folder_name)
+
+
+def select_none_items():
+    for folder_name in items_selection:
+        items_selection[folder_name]['selected'] = False
+        maj_style_bouton_item(folder_name)
+
+
+def charger_fichiers_cloud_inline():
+    global items_selection, dossiers_du_jour
+    items_selection.clear()
+
+    for widget in scrollable_frame.winfo_children():
+        widget.destroy()
+
+    dossiers_du_jour = recuperer_dossiers_du_jour()
+
+    if not dossiers_du_jour:
+        lbl_empty = tk.Label(
+            scrollable_frame, text="No acquisition folders recorded today.",
+            font=("Segoe UI", 12, "italic"), fg="#8a8a9e", bg="#1e1e2e"
+        )
+        lbl_empty.pack(padx=20, pady=20)
+    else:
+        for folder_name in dossiers_du_jour:
+            items_selection[folder_name] = {'selected': True, 'button': None}
+
+            btn_item = tk.Button(
+                scrollable_frame, font=("Segoe UI", 12, "bold"),
+                anchor="w", pady=8, cursor="hand2",
+                command=lambda f=folder_name: toggle_item(f)
+            )
+            btn_item.pack(fill=tk.X, padx=8, pady=4)
+
+            items_selection[folder_name]['button'] = btn_item
+            maj_style_bouton_item(folder_name)
+
+
+def envoyer_fichiers_rclone():
+    dossiers_a_envoyer = [f for f, info in items_selection.items() if info['selected']]
+
+    if not dossiers_a_envoyer:
+        lbl_transfer_status.config(text="Please select at least one folder.", fg="#e57373")
+        return
+
+    lbl_transfer_status.config(text=f"Uploading folders via rclone to '{RCLONE_REMOTE_PATH}'...", fg="#ffb74d")
+    app.update()
+
+    succes_count = 0
+    erreurs = []
+
+    for folder_name in dossiers_a_envoyer:
+        folder_path = os.path.join(DOSSIER_SAUVEGARDE, folder_name)
+        remote_dest = f"{RCLONE_REMOTE_PATH}/{folder_name}"
+        cmd = ["rclone", "copy", folder_path, remote_dest]
+
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode == 0:
+                succes_count += 1
+            else:
+                erreurs.append(f"{folder_name}: {result.stderr.strip()}")
+        except Exception as e:
+            erreurs.append(f"{folder_name}: {str(e)}")
+
+    if len(erreurs) == 0:
+        msg_ok = f"Success! {succes_count} folder(s) sent to Cloud ({RCLONE_REMOTE_NAME})."
+        lbl_transfer_status.config(text=msg_ok, fg="#81c784")
+        afficher_status(msg_ok, "#81c784")
+    else:
+        msg_err = f"Transferred: {succes_count}/{len(dossiers_a_envoyer)}. Errors encountered."
+        lbl_transfer_status.config(text=msg_err, fg="#e57373")
+        afficher_status(f"Rclone error during transfer: {erreurs[0]}", "#e57373")
 
 
 # ==========================================
@@ -568,82 +692,157 @@ app.attributes('-topmost', True)
 
 # Dynamic Status Badge
 lbl_etat = tk.Label(
-    app, text="● STANDBY / READY",
+    app, text="STANDBY / READY",
     font=("Segoe UI", 16, "bold"), bg="#4caf50", fg="white",
     pady=14, padx=20, bd=0
 )
-lbl_etat.pack(fill=tk.X, padx=30, pady=(30, 20))
+lbl_etat.pack(fill=tk.X, padx=30, pady=(20, 10))
 
 # --- CARD 1: CONFIGURATION & TOOLS ---
 card_tools = tk.Frame(app, bg="#2b2b3d", bd=0)
-card_tools.pack(fill=tk.X, padx=30, pady=12, ipady=12)
+card_tools.pack(fill=tk.X, padx=30, pady=6, ipady=8)
 
 lbl_card1 = tk.Label(
-    card_tools, text="APPLICATION & CALIBRATION",
-    font=("Segoe UI", 13, "bold"), fg="#8a8a9e", bg="#2b2b3d"
+    card_tools, text="APPLICATION & TOOLS",
+    font=("Segoe UI", 12, "bold"), fg="#8a8a9e", bg="#2b2b3d"
 )
-lbl_card1.pack(anchor=tk.W, padx=24, pady=(16, 10))
+lbl_card1.pack(anchor=tk.W, padx=24, pady=(10, 6))
 
 btn_frame = tk.Frame(card_tools, bg="#2b2b3d")
-btn_frame.pack(fill=tk.X, padx=24, pady=8)
+btn_frame.pack(fill=tk.X, padx=24, pady=5)
 
 btn_app = tk.Button(
-    btn_frame, text="🌐 Open Web App", command=ouvrir_application_web,
-    font=("Segoe UI", 13, "bold"), bg="#3a3a52", fg="white", activebackground="#4a4a68",
-    activeforeground="white", bd=0, pady=16, cursor="hand2"
+    btn_frame, text="Web App", command=ouvrir_application_web,
+    font=("Segoe UI", 12, "bold"), bg="#3a3a52", fg="white", activebackground="#4a4a68",
+    activeforeground="white", bd=0, pady=12, cursor="hand2"
 )
-btn_app.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+btn_app.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
 
 btn_calib = tk.Button(
-    btn_frame, text="⚙️ Calibration", command=ouvrir_calibration,
-    font=("Segoe UI", 13, "bold"), bg="#2196f3", fg="white", activebackground="#1e88e5",
-    activeforeground="white", bd=0, pady=16, cursor="hand2"
+    btn_frame, text="Calibration", command=ouvrir_calibration,
+    font=("Segoe UI", 12, "bold"), bg="#2196f3", fg="white", activebackground="#1e88e5",
+    activeforeground="white", bd=0, pady=12, cursor="hand2"
 )
-btn_calib.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(10, 0))
+btn_calib.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(6, 0))
+
 
 # --- CARD 2: NEW ACQUISITION ---
 card_acq = tk.Frame(app, bg="#2b2b3d", bd=0)
-card_acq.pack(fill=tk.X, padx=30, pady=12, ipady=12)
+card_acq.pack(fill=tk.X, padx=30, pady=6, ipady=8)
 
 lbl_card2 = tk.Label(
     card_acq, text="NEW ACQUISITION",
-    font=("Segoe UI", 13, "bold"), fg="#8a8a9e", bg="#2b2b3d"
+    font=("Segoe UI", 12, "bold"), fg="#8a8a9e", bg="#2b2b3d"
 )
-lbl_card2.pack(anchor=tk.W, padx=24, pady=(16, 10))
+lbl_card2.pack(anchor=tk.W, padx=24, pady=(10, 6))
 
 lbl_saisie = tk.Label(
-    card_acq, text="File Name:",
-    font=("Segoe UI", 14), fg="#e0e0e0", bg="#2b2b3d"
+    card_acq, text="Acquisition Folder Name:",
+    font=("Segoe UI", 13), fg="#e0e0e0", bg="#2b2b3d"
 )
-lbl_saisie.pack(anchor=tk.W, padx=24, pady=(4, 4))
+lbl_saisie.pack(anchor=tk.W, padx=24, pady=(2, 2))
 
 entree_nom = tk.Entry(
-    card_acq, font=("Segoe UI", 18), bg="#1e1e2e", fg="white",
+    card_acq, font=("Segoe UI", 16), bg="#1e1e2e", fg="white",
     insertbackground="white", bd=1, relief=tk.SOLID
 )
-entree_nom.pack(fill=tk.X, padx=24, pady=10, ipady=10)
+entree_nom.pack(fill=tk.X, padx=24, pady=6, ipady=6)
 entree_nom.bind('<Return>', lancer_acquisition)
 
 btn_acq = tk.Button(
-    card_acq, text="🚀 Start Acquisition", command=lancer_acquisition,
-    font=("Segoe UI", 16, "bold"), bg="#4caf50", fg="white", activebackground="#43a047",
-    activeforeground="white", bd=0, pady=18, cursor="hand2"
+    card_acq, text="Start Acquisition", command=lancer_acquisition,
+    font=("Segoe UI", 15, "bold"), bg="#4caf50", fg="white", activebackground="#43a047",
+    activeforeground="white", bd=0, pady=14, cursor="hand2"
 )
-btn_acq.pack(fill=tk.X, padx=24, pady=(16, 22))
+btn_acq.pack(fill=tk.X, padx=24, pady=(10, 14))
+
+
+# --- CARD 3: CLOUD TRANSFER (EXPANDABLE) ---
+card_cloud = tk.Frame(app, bg="#2b2b3d", bd=0)
+card_cloud.pack(fill=tk.X, padx=30, pady=6, ipady=8)
+
+lbl_card3 = tk.Label(
+    card_cloud, text="CLOUD TRANSFER",
+    font=("Segoe UI", 12, "bold"), fg="#8a8a9e", bg="#2b2b3d"
+)
+lbl_card3.pack(anchor=tk.W, padx=24, pady=(10, 6))
+
+btn_cloud = tk.Button(
+    card_cloud, text="Save to Cloud", command=toggle_cloud_expansion,
+    font=("Segoe UI", 14, "bold"), bg="#9c27b0", fg="white", activebackground="#8e24aa",
+    activeforeground="white", bd=0, pady=12, cursor="hand2"
+)
+btn_cloud.pack(fill=tk.X, padx=24, pady=(6, 10))
+
+# Hidden Expandable Content Frame inside Card 3
+frame_cloud_content = tk.Frame(card_cloud, bg="#2b2b3d")
+
+# Check All / Check None Quick Selection Bar
+frame_select_bar = tk.Frame(frame_cloud_content, bg="#2b2b3d")
+frame_select_bar.pack(fill=tk.X, pady=(4, 8))
+
+btn_all = tk.Button(
+    frame_select_bar, text="[X] Check All", command=select_all_items,
+    font=("Segoe UI", 14, "bold"), bg="#3a3a52", fg="#e0e0e0",
+    activebackground="#4a4a68", activeforeground="white", bd=0, pady=8, cursor="hand2"
+)
+btn_all.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+
+btn_none = tk.Button(
+    frame_select_bar, text="[ ] Check None", command=select_none_items,
+    font=("Segoe UI", 14, "bold"), bg="#3a3a52", fg="#e0e0e0",
+    activebackground="#4a4a68", activeforeground="white", bd=0, pady=8, cursor="hand2"
+)
+btn_none.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(5, 0))
+
+# Scrollable Container (Height = 220px)
+frame_scroll_box = tk.Frame(frame_cloud_content, bg="#1e1e2e", height=220)
+frame_scroll_box.pack(fill=tk.X, pady=6)
+frame_scroll_box.pack_propagate(False)
+
+canvas_scroll = tk.Canvas(frame_scroll_box, bg="#1e1e2e", highlightthickness=0)
+scrollbar = tk.Scrollbar(frame_scroll_box, orient="vertical", command=canvas_scroll.yview)
+scrollable_frame = tk.Frame(canvas_scroll, bg="#1e1e2e")
+
+scrollable_frame.bind(
+    "<Configure>",
+    lambda e: canvas_scroll.configure(scrollregion=canvas_scroll.bbox("all"))
+)
+
+canvas_scroll.create_window((0, 0), window=scrollable_frame, anchor="nw")
+canvas_scroll.configure(yscrollcommand=scrollbar.set)
+
+canvas_scroll.pack(side="left", fill="both", expand=True, padx=8, pady=8)
+scrollbar.pack(side="right", fill="y", pady=8)
+
+lbl_transfer_status = tk.Label(
+    frame_cloud_content, text="", font=("Segoe UI", 14, "italic"),
+    fg="#81c784", bg="#2b2b3d"
+)
+lbl_transfer_status.pack(pady=4)
+
+btn_rclone_upload = tk.Button(
+    frame_cloud_content, text="Upload Selected via Rclone", command=envoyer_fichiers_rclone,
+    font=("Segoe UI", 13, "bold"), bg="#4caf50", fg="white",
+    activebackground="#43a047", activeforeground="white", bd=0, pady=12, cursor="hand2"
+)
+btn_rclone_upload.pack(fill=tk.X, pady=(4, 10))
+
 
 # --- STATUS / CONSOLE AREA ---
 lbl_status = tk.Label(
-    app, text="", font=("Segoe UI", 14, "italic"),
+    app, text="", font=("Segoe UI", 12, "italic"),
     fg="#e0e0e0", bg="#1e1e2e", wraplength=580, justify=tk.CENTER
 )
-lbl_status.pack(fill=tk.X, padx=30, pady=15)
+lbl_status.pack(fill=tk.X, padx=30, pady=10)
 
-# --- FOOTER: EXIT ---
+
+# --- FOOTER: OVERSIZED EXIT BUTTON ---
 btn_quitter = tk.Button(
-    app, text="❌ Exit", command=app.quit,
-    font=("Segoe UI", 13, "bold"), bg="#1e1e2e", fg="#8a8a9e", activebackground="#1e1e2e",
-    activeforeground="#f44336", bd=0, cursor="hand2"
+    app, text="EXIT APPLICATION", command=app.quit,
+    font=("Segoe UI", 15, "bold"), bg="#d32f2f", fg="white",
+    activebackground="#b71c1c", activeforeground="white", bd=0, pady=16, cursor="hand2"
 )
-btn_quitter.pack(side=tk.BOTTOM, pady=25)
+btn_quitter.pack(side=tk.BOTTOM, fill=tk.X, padx=30, pady=(10, 20))
 
 app.mainloop()
