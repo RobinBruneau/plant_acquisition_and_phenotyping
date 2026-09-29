@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PhenoAIxpert Control</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            font-size: 13px;
+        }
+
+        body {
+            background-color: #d8d8d8;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Top Bar */
+        .top-bar {
+            background-color: #8cc63f;
+            height: 25px;
+            width: 100%;
+        }
+
+        /* Main Container */
+        .main-container {
+            display: flex;
+            flex: 1;
+            background-color: #f0f0f0;
+        }
+
+        /* Sidebar Left */
+        .sidebar {
+            width: 220px;
+            background-color: #e6e6e6;
+            border-right: 1px solid #ccc;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        .sidebar-title {
+            color: #0072bc;
+            font-size: 14px;
+            margin-bottom: 20px;
+        }
+
+        .btn-group-top button {
+            width: 100%;
+            padding: 10px 5px;
+            margin-bottom: 12px;
+            border: 1px solid #005691;
+            border-radius: 4px;
+            background-color: #0072bc;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+            text-align: center;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.3);
+        }
+
+        .btn-group-top button.bg-green {
+            background-color: #8cc63f;
+            border-color: #6a9b2d;
+            color: black;
+            font-weight: normal;
+        }
+
+        /* Style spécifique pour le bouton Initialize/Shutdown System */
+        #btn-init.active-orange {
+            background-color: #ff7f00 !important;
+            border-color: #cc6600 !important;
+            color: white !important;
+        }
+
+        .btn-group-bottom button {
+            width: 100%;
+            padding: 8px 5px;
+            margin-bottom: 8px;
+            border: 1px solid #808080;
+            border-radius: 4px;
+            background-color: #a6a6a6;
+            color: black;
+            cursor: pointer;
+        }
+
+        .logo-container {
+            margin-top: 20px;
+            font-weight: bold;
+            font-size: 18px;
+            color: #8cc63f;
+        }
+        
+        .logo-sub {
+            font-size: 9px;
+            color: #666;
+            font-weight: normal;
+        }
+
+        /* Central Panel */
+        .content-panel {
+            flex: 1;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            background-color: #ffffff;
+            border-right: 1px solid #ccc;
+        }
+
+        .content-header {
+            color: #0072bc;
+            font-size: 14px;
+            margin-bottom: 15px;
+        }
+
+        .center-workspace {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .device-image {
+            width: 260px;
+            height: 180px;
+            background-color: #e0e0e0;
+            margin-bottom: 25px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            position: relative;
+        }
+
+        /* Form Controls */
+        .form-row {
+            display: flex;
+            width: 480px;
+            margin-bottom: 10px;
+        }
+
+        .config-buttons {
+            width: 150px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-right: 10px;
+        }
+
+        .btn-blue-config {
+            background-color: #0072bc;
+            color: white;
+            border: 1px solid #005691;
+            padding: 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            text-align: center;
+            font-size: 11px;
+        }
+
+        .btn-white-config {
+            background-color: #ffffff;
+            color: black;
+            border: 1px solid #ccc;
+            padding: 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            text-align: center;
+            font-size: 11px;
+        }
+
+        .green-form-box {
+            background-color: #8cc63f;
+            padding: 12px;
+            border-radius: 3px;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .field-group {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .field-group label {
+            width: 110px;
+            font-weight: bold;
+            color: #000;
+        }
+
+        .field-group input, .field-group select {
+            flex: 1;
+            padding: 4px 6px;
+            border: 1px solid #ccc;
+            border-radius: 2px;
+            background-color: white;
+        }
+
+        .select-container {
+            display: flex;
+            flex: 1;
+            gap: 4px;
+        }
+
+        .folder-btn {
+            background: white;
+            border: 1px solid #ccc;
+            padding: 2px 6px;
+            border-radius: 2px;
+            cursor: pointer;
+        }
+
+        .record-action-box {
+            margin-top: 30px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        /* Bouton Record principal */
+        .btn-record-main {
+            width: 300px;
+            padding: 12px;
+            background-color: #8cc63f;
+            border: 1px solid #6a9b2d;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        /* État gris désactivé pour Record (F1) */
+        .btn-record-main.disabled-gray {
+            background-color: #a6a6a6 !important;
+            border-color: #808080 !important;
+            color: #555555 !important;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+
+        .record-instruction {
+            margin-top: 15px;
+            color: #333;
+        }
+
+        /* Right Panel (Logs) */
+        .right-panel {
+            width: 450px;
+            background-color: #ffffff;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .tabs {
+            display: flex;
+            border-bottom: 1px solid #ccc;
+            margin-bottom: 10px;
+        }
+
+        .tab {
+            padding: 5px 12px;
+            cursor: pointer;
+            color: #333;
+        }
+
+        .tab.active {
+            border: 1px solid #ccc;
+            border-bottom: 1px solid white;
+            margin-bottom: -1px;
+            background: white;
+        }
+
+        .log-area {
+            flex: 1;
+            background-color: #ffffff;
+            border: 1px solid #e0e0e0;
+            font-family: monospace;
+            font-size: 10px;
+            padding: 8px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            color: #333;
+            line-height: 1.4;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="top-bar"></div>
+
+    <div class="main-container">
+        
+        <!-- Sidebar Gauche -->
+        <div class="sidebar">
+            <div>
+                <div class="sidebar-title">PhenoAIxpert Control</div>
+                
+                <div class="btn-group-top">
+                    <button id="btn-init" onclick="toggleInitialize()">Initialise/Shutdown System</button>
+                    <button>Edit Sensor Unit Config</button>
+                    <button>Edit Recording Config</button>
+                    <button class="bg-green">Recording</button>
+                </div>
+            </div>
+
+            <div>
+                <div class="btn-group-bottom">
+                    <button>Data Handling Monitor</button>
+                    <button>Service</button>
+                </div>
+
+                <div class="logo-container">
+                    LemnaTec
+                    <div class="logo-sub">MEMBER OF THE NOLDUS GROUP</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Panneau Central -->
+        <div class="content-panel">
+            <div class="content-header">Recording</div>
+
+            <div class="center-workspace">
+                <!-- Simulation visuelle du cabinet d'imagerie -->
+                <div class="device-image">
+                    <svg width="200" height="150" viewBox="0 0 200 150">
+                        <rect x="40" y="30" width="120" height="90" fill="#2d68c4" stroke="#000" stroke-width="2"/>
+                        <rect x="50" y="40" width="100" height="70" fill="#e1f5fe" stroke="#000"/>
+                        <polygon points="150,30 170,10 170,100 150,120" fill="#8cc63f" stroke="#000"/>
+                        <polygon points="40,30 150,30 170,10 60,10" fill="#a0a0a0" stroke="#000"/>
+                    </svg>
+                </div>
+
+                <!-- Formulaire de Configuration -->
+                <div class="form-row">
+                    <div class="config-buttons">
+                        <div class="btn-blue-config">Free Configuration ⚙</div>
+                        <div class="btn-white-config">Prepared Configuration ⚙</div>
+                    </div>
+
+                    <div class="green-form-box">
+                        <div class="field-group">
+                            <label for="sample-id">Sample ID:</label>
+                            <input type="text" id="sample-id" value="part-0-180">
+                        </div>
+
+                        <div class="field-group">
+                            <label for="experiment">Experiment:</label>
+                            <input type="text" id="experiment" value="acquisition_2">
+                        </div>
+
+                        <div class="field-group">
+                            <label for="recording-config">Recording Config:</label>
+                            <div class="select-container">
+                                <select id="recording-config">
+                                    <option>top-and-side-0-180</option>
+                                    <option>top-and-side-180-360</option>
+                                    <option>side-only</option>
+                                </select>
+                                <button class="folder-btn">📁</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Bouton de Lancement -->
+                <div class="record-action-box">
+                    <button id="btn-record-main" class="btn-record-main" onclick="triggerRecordMain()">Record (F1)</button>
+                    <div id="record-instruction" class="record-instruction">Please press 'Record' button</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Panneau de Log Droite -->
+        <div class="right-panel">
+            <div class="tabs">
+                <div class="tab">Last Recording</div>
+                <div class="tab">Latest Recordings</div>
+                <div class="tab active">Log</div>
+            </div>
+
+            <div class="log-area" id="log-output">
+[1] 2026.09.29 14:30:10:245 - DataHandling: Data saved for acquisition 2
+[2] 2026.09.29 14:30:15:012 - System: Ready for next acquisition sequence
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // 1. Bouton "Initialise/Shutdown System" devient orange au clic
+        function toggleInitialize() {
+            const btn = document.getElementById('btn-init');
+            btn.classList.toggle('active-orange');
+            
+            const logArea = document.getElementById('log-output');
+            const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+            logArea.innerText += `\n[Log] ${now} - Initialize/Shutdown toggled.`;
+        }
+
+        // 2. Bouton "Record (F1)" devient gris pendant 10s puis repasse au vert
+        let isRecording = false;
+
+        function triggerRecordMain() {
+            if (isRecording) return;
+
+            isRecording = true;
+            const btnRecord = document.getElementById('btn-record-main');
+            const instruction = document.getElementById('record-instruction');
+            const logArea = document.getElementById('log-output');
+            const sampleId = document.getElementById('sample-id').value;
+            const experiment = document.getElementById('experiment').value;
+
+            // Passage au gris
+            btnRecord.classList.add('disabled-gray');
+            btnRecord.innerText = "Recording in progress...";
+            instruction.innerText = "Recording in progress, please wait...";
+
+            // Log de début
+            const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+            logArea.innerText += `\n[Log] ${now} - Record started | Sample ID: ${sampleId} | Experiment: ${experiment}`;
+            logArea.scrollTop = logArea.scrollHeight;
+
+            // Compte à rebours de 10 secondes
+            setTimeout(() => {
+                btnRecord.classList.remove('disabled-gray');
+                btnRecord.innerText = "Record (F1)";
+                instruction.innerText = "Please press 'Record' button";
+                isRecording = false;
+
+                // Log de fin
+                const endNow = new Date().toISOString().replace('T', ' ').substring(0, 19);
+                logArea.innerText += `\n[Log] ${endNow} - Record completed successfully.`;
+                logArea.scrollTop = logArea.scrollHeight;
+            }, 10000);
+        }
+    </script>
+</body>
+</html>
