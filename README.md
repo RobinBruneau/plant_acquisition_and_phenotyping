@@ -5,7 +5,7 @@ Metashape reconstructs each plant, and the analysis turns every reconstruction i
 traits, then compares groups of plants.
 
 ```
-acquisition/   acquisition GUI (acquisition_manger.py) and its web page / test bridge server
+acquisition/   acquisition GUI (acquisition_manager.py) and its web page / test bridge server
 analysis/      analysis pipeline (one script per step) and group comparison
 envs/          install script of the conda env
 third_party/   Grounded-SAM-2 (git submodule, pinned)
