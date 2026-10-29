@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PhenoAIxpert Control</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            font-size: 13px;
+        }
+
+        body {
+            background-color: #d8d8d8;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Top Bar */
+        .top-bar {
+            background-color: #8cc63f;
+            height: 25px;
+            width: 100%;
+        }
+
+        /* Main Container */
+        .main-container {
+            display: flex;
+            flex: 1;
+            background-color: #f0f0f0;
+        }
+
+        /* Sidebar Left */
+        .sidebar {
+            width: 220px;
+            background-color: #e6e6e6;
+            border-right: 1px solid #ccc;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        .sidebar-title {
+            color: #0072bc;
+            font-size: 14px;
+            margin-bottom: 20px;
+        }
+
+        .btn-group-top button {
+            width: 100%;
+            padding: 10px 5px;
+            margin-bottom: 12px;
+            border: 1px solid #005691;
+            border-radius: 4px;
+            background-color: #0072bc;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+            text-align: center;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.3);
+            transition: background-color 0.2s, color 0.2s, border-color 0.2s;
+        }
+
+        .btn-group-top button.nav-active {
+            background-color: #8cc63f !important;
+            border-color: #6a9b2d !important;
+            color: black !important;
+            font-weight: normal;
+        }
+
+        .btn-group-bottom button {
+            width: 100%;
+            padding: 8px 5px;
+            margin-bottom: 8px;
+            border: 1px solid #808080;
+            border-radius: 4px;
+            background-color: #a6a6a6;
+            color: black;
+            cursor: pointer;
+        }
+
+        .logo-container {
+            margin-top: 20px;
+            font-weight: bold;
+            font-size: 18px;
+            color: #8cc63f;
+        }
+        
+        .logo-sub {
+            font-size: 9px;
+            color: #666;
+            font-weight: normal;
+        }
+
+        /* Central Panel */
+        .content-panel {
+            flex: 1;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            background-color: #ffffff;
+            border-right: 1px solid #ccc;
+        }
+
+        .content-header {
+            color: #0072bc;
+            font-size: 14px;
+            margin-bottom: 15px;
+        }
+
+        .view-section {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+        }
+
+        .view-section.active-view {
+            display: flex;
+        }
+
+        .device-image {
+            width: 260px;
+            height: 180px;
+            background-color: #e0e0e0;
+            margin-bottom: 25px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            position: relative;
+        }
+
+        /* Form Controls */
+        .form-row {
+            display: flex;
+            width: 480px;
+            margin-bottom: 10px;
+        }
+
+        .config-buttons {
+            width: 150px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-right: 10px;
+        }
+
+        .btn-blue-config {
+            background-color: #0072bc;
+            color: white;
+            border: 1px solid #005691;
+            padding: 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            text-align: center;
+            font-size: 11px;
+        }
+
+        .btn-white-config {
+            background-color: #ffffff;
+            color: black;
+            border: 1px solid #ccc;
+            padding: 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            text-align: center;
+            font-size: 11px;
+        }
+
+        .green-form-box {
+            background-color: #8cc63f;
+            padding: 12px;
+            border-radius: 3px;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            transition: background-color 0.3s;
+        }
+
+        .green-form-box.recording-gray {
+            background-color: #d0d0d0 !important;
+        }
+
+        .field-group {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: relative;
+        }
+
+        .field-group label {
+            width: 110px;
+            font-weight: bold;
+            color: #000;
+        }
+
+        .field-group input {
+            flex: 1;
+            padding: 4px 6px;
+            border: 1px solid #ccc;
+            border-radius: 2px;
+            background-color: white;
+        }
+
+        .select-container {
+            display: flex;
+            flex: 1;
+            gap: 4px;
+            position: relative;
+        }
+
+        /* Custom Select */
+        .custom-select-trigger {
+            flex: 1;
+            padding: 4px 6px;
+            border: 1px solid #ccc;
+            border-radius: 2px;
+            background-color: white;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            user-select: none;
+        }
+
+        .custom-options-menu {
+            display: none;
+            position: absolute;
+            top: 100%;
+            left: 0;
+            width: calc(100% - 30px);
+            background-color: #ffffff;
+            border: 1px solid #0072bc;
+            border-radius: 2px;
+            z-index: 1000;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+
+        .custom-options-menu.show {
+            display: block;
+        }
+
+        .custom-option {
+            padding: 6px 10px;
+            cursor: pointer;
+            color: #333;
+            transition: background-color 0.1s, color 0.1s;
+        }
+
+        .custom-option:hover {
+            background-color: #0072bc !important;
+            color: #ffffff !important;
+        }
+
+        .folder-btn {
+            background: white;
+            border: 1px solid #ccc;
+            padding: 2px 6px;
+            border-radius: 2px;
+            cursor: pointer;
+        }
+
+        .record-action-box {
+            margin-top: 30px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .btn-record-main {
+            width: 300px;
+            padding: 12px;
+            background-color: #a6a6a6;
+            border: 1px solid #808080;
+            color: #000;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .btn-record-main.disabled-gray {
+            background-color: #888888 !important;
+            border-color: #666666 !important;
+            color: #ffffff !important;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+
+        .record-instruction {
+            margin-top: 15px;
+            color: #333;
+        }
+
+        .init-control-box {
+            width: 100%;
+            height: 100%;
+            background-color: #ffffff;
+            border: 1px solid #e0e0e0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        .init-btn-row {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+
+        .init-btn {
+            padding: 10px 25px;
+            border-radius: 4px;
+            font-weight: bold;
+            cursor: pointer;
+            border: 1px solid #ccc;
+            font-size: 13px;
+            transition: all 0.3s;
+        }
+
+        .init-btn.state-green {
+            background-color: #8cc63f;
+            border-color: #6a9b2d;
+            color: black;
+        }
+
+        .init-btn.state-red {
+            background-color: #e74c3c;
+            border-color: #c0392b;
+            color: white;
+        }
+
+        .init-btn.state-gray {
+            background-color: #d0d0d0;
+            border-color: #b0b0b0;
+            color: #777;
+            cursor: not-allowed;
+        }
+
+        .init-status-text {
+            color: #555;
+            font-style: italic;
+        }
+
+        /* Right Panel (Logs) */
+        .right-panel {
+            width: 450px;
+            background-color: #ffffff;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .tabs {
+            display: flex;
+            border-bottom: 1px solid #ccc;
+            margin-bottom: 10px;
+        }
+
+        .tab {
+            padding: 5px 12px;
+            cursor: pointer;
+            color: #333;
+        }
+
+        .tab.active {
+            border: 1px solid #ccc;
+            border-bottom: 1px solid white;
+            margin-bottom: -1px;
+            background: white;
+        }
+
+        .log-area {
+            flex: 1;
+            background-color: #ffffff;
+            border: 1px solid #e0e0e0;
+            font-family: monospace;
+            font-size: 10px;
+            padding: 8px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            color: #333;
+            line-height: 1.4;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="top-bar"></div>
+
+    <div class="main-container">
+        
+        <!-- Sidebar Gauche -->
+        <div class="sidebar">
+            <div>
+                <div class="sidebar-title">PhenoAIxpert Control</div>
+                
+                <div class="btn-group-top">
+                    <button id="nav-init" onclick="switchTab('init')">Initialise/Shutdown System</button>
+                    <button id="nav-sensor" onclick="switchTab('sensor')">Edit Sensor Unit Config</button>
+                    <button id="nav-rec-config" onclick="switchTab('rec-config')">Edit Recording Config</button>
+                    <button id="nav-recording" class="nav-active" onclick="switchTab('recording')">Recording</button>
+                </div>
+            </div>
+
+            <div>
+                <div class="btn-group-bottom">
+                    <button>Data Handling Monitor</button>
+                    <button>Service</button>
+                </div>
+
+                <div class="logo-container">
+                    LemnaTec
+                    <div class="logo-sub">MEMBER OF THE NOLDUS GROUP</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Panneau Central -->
+        <div class="content-panel">
+            <div class="content-header" id="panel-header-title">Recording</div>
+
+            <!-- VUE 1 : Initialize / Shutdown System -->
+            <div id="view-init" class="view-section">
+                <div class="init-control-box">
+                    <div class="init-btn-row">
+                        <button id="btn-sub-init" class="init-btn state-green" onclick="handleSubInitialize()">Initialize</button>
+                        <button id="btn-sub-shutdown" class="init-btn state-gray" onclick="handleSubShutdown()">Shutdown</button>
+                    </div>
+                    <div id="init-status-msg" class="init-status-text">System is currently shut down. Click Initialize to start.</div>
+                </div>
+            </div>
+
+            <!-- VUE 2 : Edit Sensor Unit Config -->
+            <div id="view-sensor" class="view-section">
+                <div class="init-control-box">
+                    <h3>Sensor Unit Configuration</h3>
+                    <p style="margin-top:10px; color:#666;">Modify sensors gain, exposure, and trigger settings here.</p>
+                </div>
+            </div>
+
+            <!-- VUE 3 : Edit Recording Config -->
+            <div id="view-rec-config" class="view-section">
+                <div class="init-control-box">
+                    <h3>Recording Configuration</h3>
+                    <p style="margin-top:10px; color:#666;">Manage acquisition presets and sequences.</p>
+                </div>
+            </div>
+
+            <!-- VUE 4 : Recording (Vue Principale) -->
+            <div id="view-recording" class="view-section active-view">
+                <div class="device-image">
+                    <svg width="200" height="150" viewBox="0 0 200 150">
+                        <rect x="40" y="30" width="120" height="90" fill="#2d68c4" stroke="#000" stroke-width="2"/>
+                        <rect x="50" y="40" width="100" height="70" fill="#e1f5fe" stroke="#000"/>
+                        <polygon points="150,30 170,10 170,100 150,120" fill="#8cc63f" stroke="#000"/>
+                        <polygon points="40,30 150,30 170,10 60,10" fill="#a0a0a0" stroke="#000"/>
+                    </svg>
+                </div>
+
+                <div class="form-row">
+                    <div class="config-buttons">
+                        <div class="btn-blue-config">Free Configuration ⚙</div>
+                        <div class="btn-white-config">Prepared Configuration ⚙</div>
+                    </div>
+
+                    <div id="green-form-box" class="green-form-box">
+                        <div class="field-group">
+                            <label for="sample-id">Sample ID:</label>
+                            <input type="text" id="sample-id" value="part-0-180">
+                        </div>
+
+                        <div class="field-group">
+                            <label for="experiment">Experiment:</label>
+                            <input type="text" id="experiment" value="acquisition_2">
+                        </div>
+
+                        <div class="field-group">
+                            <label>Recording Config:</label>
+                            <div class="select-container">
+                                <div class="custom-select-trigger" id="select-trigger" onclick="toggleDropdown()">
+                                    <span id="selected-val">top-and-side-0-180</span>
+                                    <span style="font-size: 10px;">▼</span>
+                                </div>
+                                <div class="custom-options-menu" id="options-menu">
+                                    <div class="custom-option" onclick="selectOption('top-and-side-0-180')">top-and-side-0-180</div>
+                                    <div class="custom-option" onclick="selectOption('top-and-side-180-360')">top-and-side-180-360</div>
+                                    <div class="custom-option" onclick="selectOption('side-only')">side-only</div>
+                                </div>
+                                <button class="folder-btn">📁</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="record-action-box">
+                    <button id="btn-record-main" class="btn-record-main" onclick="triggerRecordMain()">Record (F1)</button>
+                    <div id="record-instruction" class="record-instruction">Please press 'Record' button</div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Panneau de Log Droite -->
+        <div class="right-panel">
+            <div class="tabs">
+                <div class="tab">Last Recording</div>
+                <div class="tab">Latest Recordings</div>
+                <div class="tab active">Log</div>
+            </div>
+
+            <div class="log-area" id="log-output">[1] 2026.09.29 14:30:10:245 - DataHandling: Data saved for acquisition 2
+[2] 2026.09.29 14:30:15:012 - System: Ready for next acquisition sequence</div>
+        </div>
+
+    </div>
+
+    <script>
+        // ETAT GLOBAL PERSISTANT
+        let systemState = "SHUTDOWN"; 
+        let isRecordingState = false;
+
+        function updateInitViewUI() {
+            const btnInit = document.getElementById('btn-sub-init');
+            const btnShutdown = document.getElementById('btn-sub-shutdown');
+            const statusMsg = document.getElementById('init-status-msg');
+
+            if (!btnInit || !btnShutdown || !statusMsg) return;
+
+            if (systemState === "SHUTDOWN") {
+                btnInit.className = 'init-btn state-green';
+                btnShutdown.className = 'init-btn state-gray';
+                statusMsg.innerText = "System is currently shut down. Click Initialize to start.";
+            } else if (systemState === "INITIALIZING") {
+                btnInit.className = 'init-btn state-gray';
+                btnShutdown.className = 'init-btn state-gray';
+                statusMsg.innerText = "Initializing system, please wait 3 seconds...";
+            } else if (systemState === "INITIALIZED") {
+                btnInit.className = 'init-btn state-gray';
+                btnShutdown.className = 'init-btn state-red';
+                statusMsg.innerText = "System is initialized and active. Click Shutdown to power off.";
+            } else if (systemState === "SHUTTING_DOWN") {
+                btnInit.className = 'init-btn state-gray';
+                btnShutdown.className = 'init-btn state-gray';
+                statusMsg.innerText = "Shutting down system, please wait 3 seconds...";
+            }
+        }
+
+        function updateRecordingViewUI() {
+            const btnRecord = document.getElementById('btn-record-main');
+            const formBox = document.getElementById('green-form-box');
+            const instruction = document.getElementById('record-instruction');
+
+            if (!btnRecord || !formBox || !instruction) return;
+
+            if (isRecordingState) {
+                btnRecord.classList.add('disabled-gray');
+                formBox.classList.add('recording-gray');
+                btnRecord.innerText = "Recording in progress...";
+                instruction.innerText = "Recording in progress, please wait...";
+            } else {
+                btnRecord.classList.remove('disabled-gray');
+                formBox.classList.remove('recording-gray');
+                btnRecord.innerText = "Record (F1)";
+                instruction.innerText = "Please press 'Record' button";
+            }
+        }
+
+        function switchTab(tabKey) {
+            document.querySelectorAll('.btn-group-top button').forEach(btn => {
+                btn.classList.remove('nav-active');
+            });
+            document.querySelectorAll('.view-section').forEach(view => {
+                view.classList.remove('active-view');
+            });
+
+            const headerTitle = document.getElementById('panel-header-title');
+
+            if (tabKey === 'init') {
+                document.getElementById('nav-init').classList.add('nav-active');
+                document.getElementById('view-init').classList.add('active-view');
+                headerTitle.innerText = "Initialize / Shutdown System";
+            } else if (tabKey === 'sensor') {
+                document.getElementById('nav-sensor').classList.add('nav-active');
+                document.getElementById('view-sensor').classList.add('active-view');
+                headerTitle.innerText = "Edit Sensor Unit Config";
+            } else if (tabKey === 'rec-config') {
+                document.getElementById('nav-rec-config').classList.add('nav-active');
+                document.getElementById('view-rec-config').classList.add('active-view');
+                headerTitle.innerText = "Edit Recording Config";
+            } else if (tabKey === 'recording') {
+                document.getElementById('nav-recording').classList.add('nav-active');
+                document.getElementById('view-recording').classList.add('active-view');
+                headerTitle.innerText = "Recording";
+            }
+
+            updateInitViewUI();
+            updateRecordingViewUI();
+
+            addLog(`Switched view to '${headerTitle.innerText}'`);
+        }
+
+        function toggleDropdown() {
+            const menu = document.getElementById('options-menu');
+            menu.classList.toggle('show');
+        }
+
+        function selectOption(val) {
+            document.getElementById('selected-val').innerText = val;
+            document.getElementById('options-menu').classList.remove('show');
+            addLog(`Selected config: ${val}`);
+        }
+
+        function handleSubInitialize() {
+            if (systemState !== "SHUTDOWN") return;
+
+            systemState = "INITIALIZING";
+            updateInitViewUI();
+            addLog("System initialization sequence started...");
+
+            setTimeout(() => {
+                systemState = "INITIALIZED";
+                updateInitViewUI();
+                addLog("System initialized successfully.");
+            }, 3000);
+        }
+
+        function handleSubShutdown() {
+            if (systemState !== "INITIALIZED") return;
+
+            systemState = "SHUTTING_DOWN";
+            updateInitViewUI();
+            addLog("System shutdown sequence started...");
+
+            setTimeout(() => {
+                systemState = "SHUTDOWN";
+                updateInitViewUI();
+                addLog("System shut down successfully.");
+            }, 3000);
+        }
+
+        // COMMUNICATION AVEC LE PONT PYTHON LOCAL (BRIDGE_SERVER.PY)
+        async function enregistrerAcquisitionBackend(experiment, sampleId) {
+            try {
+                addLog(`DataHandling: Requesting file creation in '/data_app/${experiment}'...`);
+
+                const response = await fetch('http://localhost:5000/api/save_acquisition', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        experiment: experiment,
+                        sample_id: sampleId
+                    })
+                });
+
+                const resData = await response.json();
+
+                if (response.ok && resData.status === 'success') {
+                    addLog(`DataHandling: Created ${resData.count} PNGs in '${resData.path}'`);
+                } else {
+                    addLog(`DataHandling Error: ${resData.message || 'Error saving files'}`);
+                }
+            } catch (err) {
+                addLog(`DataHandling Error: Bridge server not running on port 5000`);
+            }
+        }
+
+        // Action Record (F1)
+        function triggerRecordMain() {
+            if (isRecordingState) return;
+
+            isRecordingState = true;
+            updateRecordingViewUI();
+
+            const sampleId = document.getElementById('sample-id').value;
+            const experiment = document.getElementById('experiment').value;
+            addLog(`Record started | Sample ID: ${sampleId} | Experiment: ${experiment}`);
+
+            setTimeout(async () => {
+                isRecordingState = false;
+                updateRecordingViewUI();
+
+                // Appel au serveur Python local pour l'écriture physique
+                await enregistrerAcquisitionBackend(experiment, sampleId);
+
+                addLog("Record completed successfully.");
+            }, 10000);
+        }
+
+        function addLog(message) {
+            const logArea = document.getElementById('log-output');
+            const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+            logArea.innerText += `\n[Log] ${now} - ${message}`;
+            logArea.scrollTop = logArea.scrollHeight;
+        }
+
+        updateInitViewUI();
+        updateRecordingViewUI();
+    </script>
+</body>
+</html>

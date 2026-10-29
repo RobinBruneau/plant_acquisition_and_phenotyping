@@ -13,27 +13,36 @@ import numpy as np
 # CONFIGURATION
 # ==========================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DOSSIER_SAUVEGARDE = os.path.join(BASE_DIR, "data")
 
-FICHIER_WEB = "index.html"
+# Dossier où les acquisitions sont enregistrées
+DOSSIER_DATA_APP = os.path.join(os.path.dirname(BASE_DIR), "data_app")
+DOSSIER_SAUVEGARDE = DOSSIER_DATA_APP  # Référence principale pour le cloud
+
+FICHIER_WEB = os.path.join(BASE_DIR, "index.html")
 FICHIER_CALIBRATION = os.path.join(BASE_DIR, "calibration_zones.json")
 
 # Configuration Rclone (Remote: "geneva")
 RCLONE_REMOTE_NAME = "geneva"
-RCLONE_REMOTE_FOLDER = "Acquisitions"  # Dossier cible sur le cloud
+RCLONE_REMOTE_FOLDER = "Acquisitions"
 RCLONE_REMOTE_PATH = f"{RCLONE_REMOTE_NAME}:{RCLONE_REMOTE_FOLDER}"
 
-# 5 Zones
+# Liste des 11 zones de calibration
 ZONES_CONFIG = [
-    {"id": "experiment", "label": "Experiment", "color": "#FF5722"},
-    {"id": "initialize", "label": "Initialize", "color": "#2196F3"},
-    {"id": "record", "label": "Record", "color": "#4CAF50"},
-    {"id": "recording", "label": "Recording", "color": "#E91E63"},
-    {"id": "sample_id", "label": "Sample ID", "color": "#FFC107"}
+    {"id": "nav_init_shutdown", "label": "Nav: Init/Shutdown", "color": "#2196F3"},
+    {"id": "nav_recording", "label": "Nav: Recording", "color": "#00BCD4"},
+    {"id": "btn_sub_initialize", "label": "Sub: Initialize", "color": "#4CAF50"},
+    {"id": "btn_sub_shutdown", "label": "Sub: Shutdown", "color": "#F44336"},
+    {"id": "experiment", "label": "Experiment Field", "color": "#FF5722"},
+    {"id": "sample_id", "label": "Sample ID Field", "color": "#FFC107"},
+    {"id": "dropdown_config", "label": "Dropdown Config", "color": "#9C27B0"},
+    {"id": "option_0_180", "label": "Option 0-180", "color": "#3F51B5"},
+    {"id": "option_180_360", "label": "Option 180-360", "color": "#673AB7"},
+    {"id": "record", "label": "Record (F1)", "color": "#8BC34A"},
+    {"id": "config_area", "label": "Config Area (Green/Gray)", "color": "#E91E63"}
 ]
 
-if not os.path.exists(DOSSIER_SAUVEGARDE):
-    os.makedirs(DOSSIER_SAUVEGARDE)
+if not os.path.exists(DOSSIER_DATA_APP):
+    os.makedirs(DOSSIER_DATA_APP, exist_ok=True)
 
 
 # ==========================================
@@ -81,7 +90,7 @@ def charger_zones():
 
 
 # ==========================================
-# CALIBRATION EDITOR (Static Panel on the Right)
+# CALIBRATION EDITOR
 # ==========================================
 class EditeurCalibration(tk.Toplevel):
     def __init__(self, parent):
@@ -93,7 +102,6 @@ class EditeurCalibration(tk.Toplevel):
 
         self.screen_w, self.screen_h = pyautogui.size()
 
-        # Real Screenshot Background
         screenshot = pyautogui.screenshot()
         self.bg_image = ImageTk.PhotoImage(screenshot)
 
@@ -101,7 +109,6 @@ class EditeurCalibration(tk.Toplevel):
         self.canvas.pack(fill=tk.BOTH, expand=True)
         self.canvas.create_image(0, 0, image=self.bg_image, anchor=tk.NW)
 
-        # Dark Overlay
         overlay = Image.new('RGBA', (self.screen_w, self.screen_h), (18, 18, 30, 110))
         self.overlay_img = ImageTk.PhotoImage(overlay)
         self.canvas.create_image(0, 0, image=self.overlay_img, anchor=tk.NW)
@@ -112,7 +119,6 @@ class EditeurCalibration(tk.Toplevel):
         self.mode = None
         self.drag_start = (0, 0)
 
-        # Draw unified right panel onto canvas
         self._dessiner_panneau_droite()
         self._initialiser_rectangles()
 
@@ -124,53 +130,47 @@ class EditeurCalibration(tk.Toplevel):
 
     def _dessiner_panneau_droite(self):
         x1 = self.screen_w - 700
-        y1 = 20
+        y1 = 10
         x2 = x1 + 675
-        y2 = y1 + 860
+        y2 = y1 + 980
 
-        # Main Panel Container
         self.canvas.create_rectangle(
             x1, y1, x2, y2, fill="#1e1e2e", outline="#2b2b3d", width=3
         )
 
-        # 1. Header Badge: CALIBRATION MODE
         self.canvas.create_rectangle(
-            x1 + 30, y1 + 30, x2 - 30, y1 + 90,
+            x1 + 30, y1 + 20, x2 - 30, y1 + 70,
             fill="#2196f3", outline="", width=0
         )
         self.canvas.create_text(
-            (x1 + x2) // 2, y1 + 60,
-            text="CALIBRATION MODE", fill="white", font=("Segoe UI", 16, "bold")
+            (x1 + x2) // 2, y1 + 45,
+            text="CALIBRATION MODE (11 ZONES)", fill="white", font=("Segoe UI", 15, "bold")
         )
 
-        # 2. Card: Zone Color Legend
-        card_y1 = y1 + 110
-        card_y2 = card_y1 + 430
+        card_y1 = y1 + 80
+        card_y2 = card_y1 + 750
         self.canvas.create_rectangle(
             x1 + 30, card_y1, x2 - 30, card_y2,
             fill="#2b2b3d", outline="", width=0
         )
         self.canvas.create_text(
-            x1 + 54, card_y1 + 30, text="ZONE COLOR LEGEND", anchor=tk.W,
-            fill="#8a8a9e", font=("Segoe UI", 13, "bold")
+            x1 + 54, card_y1 + 20, text="ZONE COLOR LEGEND", anchor=tk.W,
+            fill="#8a8a9e", font=("Segoe UI", 12, "bold")
         )
 
         for idx, z in enumerate(ZONES_CONFIG):
-            item_y = card_y1 + 75 + idx * 68
-            # Color Box
+            item_y = card_y1 + 45 + idx * 63
             self.canvas.create_rectangle(
-                x1 + 54, item_y, x1 + 114, item_y + 40,
+                x1 + 40, item_y, x1 + 85, item_y + 35,
                 fill=z["color"], outline="", width=0
             )
-            # Label
             self.canvas.create_text(
-                x1 + 134, item_y + 20, text=z["label"], anchor=tk.W,
-                fill="#e0e0e0", font=("Segoe UI", 14, "bold")
+                x1 + 100, item_y + 17, text=z["label"], anchor=tk.W,
+                fill="#e0e0e0", font=("Segoe UI", 12, "bold")
             )
 
-        # 3. Save Button (Green)
-        btn_save_y1 = card_y2 + 25
-        btn_save_y2 = btn_save_y1 + 75
+        btn_save_y1 = card_y2 + 15
+        btn_save_y2 = btn_save_y1 + 60
         self.btn_save_coords = (x1 + 30, btn_save_y1, x2 - 30, btn_save_y2)
         self.canvas.create_rectangle(
             self.btn_save_coords[0], self.btn_save_coords[1],
@@ -180,12 +180,11 @@ class EditeurCalibration(tk.Toplevel):
         self.canvas.create_text(
             (self.btn_save_coords[0] + self.btn_save_coords[2]) // 2,
             (self.btn_save_coords[1] + self.btn_save_coords[3]) // 2,
-            text="Save Calibration (Enter)", fill="white", font=("Segoe UI", 16, "bold")
+            text="Save Calibration (Enter)", fill="white", font=("Segoe UI", 15, "bold")
         )
 
-        # 4. Cancel Button (Dark Grey)
-        btn_cancel_y1 = btn_save_y2 + 15
-        btn_cancel_y2 = btn_cancel_y1 + 65
+        btn_cancel_y1 = btn_save_y2 + 10
+        btn_cancel_y2 = btn_cancel_y1 + 50
         self.btn_cancel_coords = (x1 + 30, btn_cancel_y1, x2 - 30, btn_cancel_y2)
         self.canvas.create_rectangle(
             self.btn_cancel_coords[0], self.btn_cancel_coords[1],
@@ -195,12 +194,12 @@ class EditeurCalibration(tk.Toplevel):
         self.canvas.create_text(
             (self.btn_cancel_coords[0] + self.btn_cancel_coords[2]) // 2,
             (self.btn_cancel_coords[1] + self.btn_cancel_coords[3]) // 2,
-            text="Cancel (Esc)", fill="white", font=("Segoe UI", 14, "bold")
+            text="Cancel (Esc)", fill="white", font=("Segoe UI", 13, "bold")
         )
 
     def _initialiser_rectangles(self):
-        grid_cols = 3
-        default_w, default_h = 240, 130
+        grid_cols = 2
+        default_w, default_h = 180, 80
 
         for idx, z in enumerate(ZONES_CONFIG):
             zid = z["id"]
@@ -215,20 +214,20 @@ class EditeurCalibration(tk.Toplevel):
             else:
                 col = idx % grid_cols
                 row = idx // grid_cols
-                x1 = 150 + col * 280
-                y1 = 120 + row * 200
+                x1 = 80 + col * 220
+                y1 = 60 + row * 110
                 x2 = x1 + default_w
                 y2 = y1 + default_h
 
             rect_id = self.canvas.create_rectangle(
-                x1, y1, x2, y2, outline=color, width=5, fill=color, stipple="gray25"
+                x1, y1, x2, y2, outline=color, width=4, fill=color, stipple="gray25"
             )
             text_id = self.canvas.create_text(
                 (x1 + x2) // 2, (y1 + y2) // 2, text=z["label"],
-                fill="white", font=("Segoe UI", 16, "bold")
+                fill="white", font=("Segoe UI", 11, "bold")
             )
             handle_id = self.canvas.create_rectangle(
-                x2 - 20, y2 - 20, x2, y2, fill="white", outline=color, width=3
+                x2 - 12, y2 - 12, x2, y2, fill="white", outline=color, width=2
             )
 
             self.items[zid] = {
@@ -282,11 +281,11 @@ class EditeurCalibration(tk.Toplevel):
             self.canvas.move(item["handle"], dx, dy)
 
         elif self.mode == "resize":
-            new_x2 = max(rx1 + 50, rx2 + dx)
-            new_y2 = max(ry1 + 50, ry2 + dy)
+            new_x2 = max(rx1 + 10, rx2 + dx)
+            new_y2 = max(ry1 + 10, ry2 + dy)
             self.canvas.coords(item["rect"], rx1, ry1, new_x2, new_y2)
             self.canvas.coords(item["text"], (rx1 + new_x2) // 2, (ry1 + new_y2) // 2)
-            self.canvas.coords(item["handle"], new_x2 - 20, new_y2 - 20, new_x2, new_y2)
+            self.canvas.coords(item["handle"], new_x2 - 12, new_y2 - 12, new_x2, new_y2)
 
     def on_release(self, event):
         self.active_item = None
@@ -314,7 +313,7 @@ class EditeurCalibration(tk.Toplevel):
 
 
 # ==========================================
-# AUTOMATION FUNCTIONS
+# AUTOMATION & COLOR DETECTION FUNCTIONS
 # ==========================================
 def ouvrir_application_web():
     if not os.path.exists(FICHIER_WEB):
@@ -364,6 +363,15 @@ def cliquer_zone(zone_id):
         return False, str(e)
 
 
+def survoler_zone(zone_id):
+    coords = get_coords_zone(zone_id)
+    if not coords:
+        return False
+    cx, cy, _, _, _, _ = coords
+    pyautogui.moveTo(cx, cy)
+    return True
+
+
 def saisir_texte_zone(zone_id, texte):
     succes, msg = cliquer_zone(zone_id)
     if not succes:
@@ -382,38 +390,69 @@ def saisir_texte_zone(zone_id, texte):
     return True, f"Text '{texte}' pasted."
 
 
-def verifier_couleur_orange(zone_id):
+# --- DETECTEURS DE COULEURS ---
+def verifier_couleur_verte(zone_id):
     coords = get_coords_zone(zone_id)
     if not coords:
         return False
     _, _, x1, y1, x2, y2 = coords
 
-    screenshot = pyautogui.screenshot(region=(x1, y1, x2 - x1, y2 - y1))
-    img_np = np.array(screenshot)
-
-    masque = (img_np[:, :, 0] > 200) & (img_np[:, :, 1] > 100) & (img_np[:, :, 1] < 180) & (img_np[:, :, 2] < 50)
-    return np.sum(masque) > 20
-
-
-def verifier_bouton_vert(zone_id):
-    coords = get_coords_zone(zone_id)
-    if not coords:
-        return False
-    _, _, x1, y1, x2, y2 = coords
-
-    screenshot = pyautogui.screenshot(region=(x1, y1, x2 - x1, y2 - y1))
+    screenshot = pyautogui.screenshot(region=(max(0, x1), max(0, y1), max(1, x2 - x1), max(1, y2 - y1)))
     img_np = np.array(screenshot)
 
     masque = (img_np[:, :, 0] > 100) & (img_np[:, :, 0] < 170) & \
              (img_np[:, :, 1] > 170) & \
              (img_np[:, :, 2] < 100)
+    return np.sum(masque) > 10
+
+
+def verifier_couleur_rouge(zone_id):
+    coords = get_coords_zone(zone_id)
+    if not coords:
+        return False
+    _, _, x1, y1, x2, y2 = coords
+
+    screenshot = pyautogui.screenshot(region=(max(0, x1), max(0, y1), max(1, x2 - x1), max(1, y2 - y1)))
+    img_np = np.array(screenshot)
+
+    masque = (img_np[:, :, 0] > 200) & (img_np[:, :, 1] < 100) & (img_np[:, :, 2] < 100)
+    return np.sum(masque) > 10
+
+
+def verifier_couleur_bleue(zone_id):
+    coords = get_coords_zone(zone_id)
+    if not coords:
+        return False
+    _, _, x1, y1, x2, y2 = coords
+
+    screenshot = pyautogui.screenshot(region=(max(0, x1), max(0, y1), max(1, x2 - x1), max(1, y2 - y1)))
+    img_np = np.array(screenshot)
+
+    masque = (img_np[:, :, 0] < 50) & (img_np[:, :, 1] > 90) & (img_np[:, :, 1] < 150) & (img_np[:, :, 2] > 170)
+    return np.sum(masque) > 10
+
+
+def verifier_config_grise(zone_id):
+    coords = get_coords_zone(zone_id)
+    if not coords:
+        return False
+    _, _, x1, y1, x2, y2 = coords
+
+    screenshot = pyautogui.screenshot(region=(max(0, x1), max(0, y1), max(1, x2 - x1), max(1, y2 - y1)))
+    img_np = np.array(screenshot)
+
+    diff_rg = np.abs(img_np[:, :, 0].astype(int) - img_np[:, :, 1].astype(int))
+    diff_gb = np.abs(img_np[:, :, 1].astype(int) - img_np[:, :, 2].astype(int))
+    masque = (diff_rg < 15) & (diff_gb < 15) & (img_np[:, :, 0] > 160) & (img_np[:, :, 0] < 220)
     return np.sum(masque) > 50
 
 
-def attendre_retour_vert(zone_id, timeout_sec=15):
-    temps_debut = time.time()
-    while time.time() - temps_debut < timeout_sec:
-        if verifier_bouton_vert(zone_id):
+def attendre_fin_enregistrement(zone_config_id, timeout_sec=120):
+    start = time.time()
+    time.sleep(0.5)
+    
+    while time.time() - start < timeout_sec:
+        if verifier_couleur_verte(zone_config_id):
             return True
         time.sleep(0.5)
         app.update()
@@ -429,7 +468,62 @@ def definir_etat_acquisition(en_cours):
 
 
 # ==========================================
-# ACQUISITION SEQUENCE (Folder + spec.txt)
+# SHUTDOWN AUTOMATIQUE DE LA MACHINE
+# ==========================================
+def arreter_machine():
+    if not charger_zones():
+        afficher_status("Cannot perform shutdown: Zones not calibrated.", "#e57373")
+        return False
+
+    afficher_status("Shutdown protocol: Switching to Init/Shutdown tab...", "#ffb74d")
+    cliquer_zone("nav_init_shutdown")
+    time.sleep(0.5)
+
+    start_time = time.time()
+    while not verifier_couleur_verte("nav_init_shutdown") and time.time() - start_time < 3:
+        time.sleep(0.2)
+        app.update()
+
+    if verifier_couleur_rouge("btn_sub_shutdown"):
+        afficher_status("Machine is ON. Clicking Shutdown (waiting 3.5s)...", "#ffb74d")
+        cliquer_zone("btn_sub_shutdown")
+
+        start_wait = time.time()
+        while not verifier_couleur_verte("btn_sub_initialize") and time.time() - start_wait < 6:
+            time.sleep(0.5)
+            app.update()
+
+        afficher_status("Machine shutdown protocol completed successfully.", "#81c784")
+        return True
+    else:
+        afficher_status("Machine is already shut down.", "#81c784")
+        return True
+
+
+def quitter_application():
+    arreter_machine()
+    app.quit()
+
+
+# ==========================================
+# VERIFICATION DU NOM DE DOSSIER EN TEMPS REEL
+# ==========================================
+def verifier_nom_dossier_existe(event=None):
+    nom_acq = entree_nom.get().strip()
+    dossier_acq = os.path.join(DOSSIER_DATA_APP, nom_acq)
+
+    if nom_acq and os.path.exists(dossier_acq):
+        entree_nom.config(highlightthickness=2, highlightbackground="#f44336", highlightcolor="#f44336", bg="#3d232a")
+        lbl_err_nom.config(text=f"⚠️ Folder '{nom_acq}' already exists in data_app", fg="#f44336")
+        return True
+    else:
+        entree_nom.config(highlightthickness=1, highlightbackground="#414158", highlightcolor="#2196f3", bg="#1e1e2e")
+        lbl_err_nom.config(text="", fg="#8a8a9e")
+        return False
+
+
+# ==========================================
+# PROTOCOLE D'ACQUISITION AUTOMATIQUE
 # ==========================================
 def lancer_acquisition(event=None):
     nom_acq = entree_nom.get().strip()
@@ -438,10 +532,8 @@ def lancer_acquisition(event=None):
         afficher_status("Error: Please enter an acquisition name.", "#e57373")
         return
 
-    # Check if folder already exists in ./data/
-    dossier_acq = os.path.join(DOSSIER_SAUVEGARDE, nom_acq)
-    if os.path.exists(dossier_acq):
-        afficher_status(f"Error: Folder '{nom_acq}' already exists in ./data/.", "#e57373")
+    if verifier_nom_dossier_existe():
+        afficher_status(f"Error: Folder '{nom_acq}' already exists. Please choose a different name.", "#e57373")
         entree_nom.focus_set()
         return
 
@@ -452,71 +544,99 @@ def lancer_acquisition(event=None):
     btn_acq.config(state=tk.DISABLED, bg="#555555")
     definir_etat_acquisition(True)
 
-    # Step 1: Initialise
-    afficher_status("Step 1/4: Clicking Initialise/Shutdown...", "#e0e0e0")
-    app.update()
-    cliquer_zone("initialize")
+    # --- ÉTAPE 1 : Allumage / Vérification ---
+    afficher_status("Step 1/6: Checking system power state...", "#e0e0e0")
+    cliquer_zone("nav_init_shutdown")
     time.sleep(0.5)
 
-    if not verifier_couleur_orange("initialize"):
-        afficher_status("Warning: Initialise zone did not turn orange.", "#ffb74d")
+    start_time = time.time()
+    while not verifier_couleur_verte("nav_init_shutdown") and time.time() - start_time < 3:
+        time.sleep(0.2)
         app.update()
-        time.sleep(1)
 
-    # Step 2: Experiment
-    afficher_status("Step 2/4: Setting 'Experiment'...", "#e0e0e0")
-    app.update()
-    saisir_texte_zone("experiment", nom_acq)
+    if not verifier_couleur_rouge("btn_sub_shutdown"):
+        afficher_status("System is OFF. Clicking Initialize (waiting 3s)...", "#ffb74d")
+        cliquer_zone("btn_sub_initialize")
+        
+        start_wait = time.time()
+        while not verifier_couleur_rouge("btn_sub_shutdown") and time.time() - start_wait < 6:
+            time.sleep(0.5)
+            app.update()
+
+        if not verifier_couleur_rouge("btn_sub_shutdown"):
+            afficher_status("Error: System failed to initialize (Shutdown not red).", "#e57373")
+            btn_acq.config(state=tk.NORMAL, bg="#4caf50")
+            definir_etat_acquisition(False)
+            return
+
+    afficher_status("System is ON and ready.", "#81c784")
+
+    # --- ÉTAPE 2 : Navigation vers Recording ---
+    afficher_status("Step 2/6: Switching to Recording tab...", "#e0e0e0")
+    cliquer_zone("nav_recording")
     time.sleep(0.5)
 
-    # Step 3: Record 1 (part-0-180)
-    afficher_status("Step 3/4: Record 1 (part-0-180)...", "#e0e0e0")
-    app.update()
-    saisir_texte_zone("sample_id", "part-0-180")
-    time.sleep(0.3)
-    cliquer_zone("record")
+    start_time = time.time()
+    while not verifier_couleur_verte("nav_recording") and time.time() - start_time < 3:
+        time.sleep(0.2)
+        app.update()
 
-    afficher_status("Waiting for Record 1 completion (green status)...", "#e0e0e0")
-    app.update()
-    if not attendre_retour_vert("record"):
+    # --- ÉTAPE 3 : Renseigner le nom ---
+    afficher_status("Step 3/6: Setting Experiment name...", "#e0e0e0")
+    saisir_texte_zone("experiment", nom_acq)
+    time.sleep(0.3)
+
+    # --- ÉTAPE 4 : Enregistrement PASSE 1 (0-180) ---
+    afficher_status("Step 4/6: Config 1 (0-180) & Record...", "#e0e0e0")
+    saisir_texte_zone("sample_id", "part-0-180")
+    time.sleep(0.2)
+
+    cliquer_zone("dropdown_config")
+    time.sleep(0.3)
+    survoler_zone("option_0_180")
+    time.sleep(0.2)
+
+    if verifier_couleur_bleue("option_0_180"):
+        afficher_status("Option 0-180 highlighted in blue. Selecting...", "#81c784")
+    cliquer_zone("option_0_180")
+    time.sleep(0.3)
+
+    cliquer_zone("record")
+    afficher_status("Recording 1 in progress...", "#ffb74d")
+    
+    if not attendre_fin_enregistrement("config_area", timeout_sec=120):
         afficher_status("Error: Timeout waiting for Record 1.", "#e57373")
         btn_acq.config(state=tk.NORMAL, bg="#4caf50")
         definir_etat_acquisition(False)
         return
 
-    # Step 4: Record 2 (part-180-360)
-    afficher_status("Step 4/4: Record 2 (part-180-360)...", "#e0e0e0")
-    app.update()
+    # --- ÉTAPE 5 : Enregistrement PASSE 2 (180-360) ---
+    afficher_status("Step 5/6: Config 2 (180-360) & Record...", "#e0e0e0")
     saisir_texte_zone("sample_id", "part-180-360")
-    time.sleep(0.3)
-    cliquer_zone("record")
+    time.sleep(0.2)
 
-    afficher_status("Waiting for Record 2 completion (green status)...", "#e0e0e0")
-    app.update()
-    if not attendre_retour_vert("record"):
+    cliquer_zone("dropdown_config")
+    time.sleep(0.3)
+    survoler_zone("option_180_360")
+    time.sleep(0.2)
+
+    if verifier_couleur_bleue("option_180_360"):
+        afficher_status("Option 180-360 highlighted in blue. Selecting...", "#81c784")
+    cliquer_zone("option_180_360")
+    time.sleep(0.3)
+
+    cliquer_zone("record")
+    afficher_status("Recording 2 in progress...", "#ffb74d")
+
+    if not attendre_fin_enregistrement("config_area", timeout_sec=120):
         afficher_status("Error: Timeout waiting for Record 2.", "#e57373")
         btn_acq.config(state=tk.NORMAL, bg="#4caf50")
         definir_etat_acquisition(False)
         return
 
-    # Final Step: Saving File in ./data/<nom_acq>/spec.txt
-    afficher_status(f"Saving spec.txt in ./data/{nom_acq}/...", "#e0e0e0")
-    app.update()
-
-    try:
-        os.makedirs(dossier_acq, exist_ok=True)
-        fichier_spec = os.path.join(dossier_acq, "spec.txt")
-
-        with open(fichier_spec, "w", encoding="utf-8") as f:
-            f.write(f"Acquisition Name: {nom_acq}\n")
-            f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write("part-0-180 done\n")
-            f.write("part-180-360 done\n")
-
-        afficher_status(f"Success! Folder './data/{nom_acq}' and spec.txt created!", "#81c784")
-        entree_nom.delete(0, tk.END)
-    except Exception as e:
-        afficher_status(f"Creation Error: {e}", "#e57373")
+    afficher_status(f"Success! Acquisition '{nom_acq}' completed!", "#81c784")
+    verifier_nom_dossier_existe()
+    charger_fichiers_cloud_inline()
 
     btn_acq.config(state=tk.NORMAL, bg="#4caf50")
     definir_etat_acquisition(False)
@@ -527,27 +647,46 @@ def afficher_status(texte, couleur):
 
 
 # ==========================================
-# INLINE CLOUD TRANSFER EXPANSION LOGIC
+# CLOUD TRANSFER LOGIC (DATA_APP, TRIÉ PAR DATE, COMPTEUR 72)
 # ==========================================
 cloud_expanded = False
-dossiers_du_jour = []
+dossiers_data_app = []
 items_selection = {}
 
-def recuperer_dossiers_du_jour():
-    dossiers_aujourdhui = []
-    aujourdhui = date.today()
 
-    if not os.path.exists(DOSSIER_SAUVEGARDE):
-        return dossiers_aujourdhui
+def compter_png_dans_dossier(folder_path):
+    """Compte tous les fichiers .png présent dans le dossier et ses sous-dossiers."""
+    total_png = 0
+    if not os.path.exists(folder_path):
+        return 0
+    
+    for root, _, files in os.walk(folder_path):
+        for f in files:
+            if f.lower().endswith(".png"):
+                total_png += 1
+    return total_png
 
-    for item in os.listdir(DOSSIER_SAUVEGARDE):
-        item_path = os.path.join(DOSSIER_SAUVEGARDE, item)
+
+def recuperer_dossiers_data_app():
+    """
+    Récupère tous les dossiers dans 'data_app' triés du PLUS RÉCENT au PLUS ANCIEN.
+    Retourne une liste de tuples: (nom_dossier, nb_png, mtime)
+    """
+    liste_dossiers = []
+
+    if not os.path.exists(DOSSIER_DATA_APP):
+        return liste_dossiers
+
+    for item in os.listdir(DOSSIER_DATA_APP):
+        item_path = os.path.join(DOSSIER_DATA_APP, item)
         if os.path.isdir(item_path):
-            mtime = date.fromtimestamp(os.path.getmtime(item_path))
-            if mtime == aujourdhui:
-                dossiers_aujourdhui.append(item)
+            mtime = os.path.getmtime(item_path)
+            nb_png = compter_png_dans_dossier(item_path)
+            liste_dossiers.append((item, nb_png, mtime))
 
-    return sorted(dossiers_aujourdhui)
+    # Tri par date de modification décroissante (du plus récent au plus ancien)
+    liste_dossiers.sort(key=lambda x: x[2], reverse=True)
+    return liste_dossiers
 
 
 def toggle_cloud_expansion():
@@ -570,20 +709,26 @@ def toggle_cloud_expansion():
 
 
 def maj_style_bouton_item(folder_name):
+    if folder_name not in items_selection:
+        return
+
     info = items_selection[folder_name]
     btn = info['button']
     is_sel = info['selected']
+    count = info['png_count']
+
+    texte_bouton = f"  [{'X' if is_sel else ' '}]  {folder_name}/  ({count}/72 png)"
 
     if is_sel:
         btn.config(
-            text=f"  [X]   {folder_name}/",
+            text=texte_bouton,
             bg="#2e7d32", fg="#ffffff",
             activebackground="#388e3c", activeforeground="#ffffff",
             relief=tk.SOLID, bd=1, highlightbackground="#4caf50"
         )
     else:
         btn.config(
-            text=f"  [  ]   {folder_name}/",
+            text=texte_bouton,
             bg="#252538", fg="#78909c",
             activebackground="#2c2c42", activeforeground="#b0bec5",
             relief=tk.FLAT, bd=0
@@ -608,26 +753,37 @@ def select_none_items():
 
 
 def charger_fichiers_cloud_inline():
-    global items_selection, dossiers_du_jour
+    """Rempli et met à jour l'interface des dossiers dans 'data_app'."""
+    global items_selection, dossiers_data_app
+
+    # Sauvegarder l'état des sélections actuelles
+    selections_anciennes = {k: v['selected'] for k, v in items_selection.items()}
     items_selection.clear()
 
     for widget in scrollable_frame.winfo_children():
         widget.destroy()
 
-    dossiers_du_jour = recuperer_dossiers_du_jour()
+    dossiers_data_app = recuperer_dossiers_data_app()
 
-    if not dossiers_du_jour:
+    if not dossiers_data_app:
         lbl_empty = tk.Label(
-            scrollable_frame, text="No acquisition folders recorded today.",
+            scrollable_frame, text="No acquisitions found in data_app.",
             font=("Segoe UI", 12, "italic"), fg="#8a8a9e", bg="#1e1e2e"
         )
         lbl_empty.pack(padx=20, pady=20)
     else:
-        for folder_name in dossiers_du_jour:
-            items_selection[folder_name] = {'selected': True, 'button': None}
+        for folder_name, nb_png, mtime in dossiers_data_app:
+            # Conserver le choix si l'élément existait déjà, sinon coché par défaut
+            est_selectionne = selections_anciennes.get(folder_name, True)
+
+            items_selection[folder_name] = {
+                'selected': est_selectionne,
+                'png_count': nb_png,
+                'button': None
+            }
 
             btn_item = tk.Button(
-                scrollable_frame, font=("Segoe UI", 12, "bold"),
+                scrollable_frame, font=("Segoe UI", 13, "bold"),
                 anchor="w", pady=8, cursor="hand2",
                 command=lambda f=folder_name: toggle_item(f)
             )
@@ -637,6 +793,13 @@ def charger_fichiers_cloud_inline():
             maj_style_bouton_item(folder_name)
 
 
+def rafraichir_automatique():
+    """Mise à jour périodique toutes les 5 secondes."""
+    if cloud_expanded:
+        charger_fichiers_cloud_inline()
+    app.after(5000, rafraichir_automatique)
+
+
 def envoyer_fichiers_rclone():
     dossiers_a_envoyer = [f for f, info in items_selection.items() if info['selected']]
 
@@ -644,14 +807,14 @@ def envoyer_fichiers_rclone():
         lbl_transfer_status.config(text="Please select at least one folder.", fg="#e57373")
         return
 
-    lbl_transfer_status.config(text=f"Uploading folders via rclone to '{RCLONE_REMOTE_PATH}'...", fg="#ffb74d")
+    lbl_transfer_status.config(text=f"Uploading selected folders to '{RCLONE_REMOTE_PATH}'...", fg="#ffb74d")
     app.update()
 
     succes_count = 0
     erreurs = []
 
     for folder_name in dossiers_a_envoyer:
-        folder_path = os.path.join(DOSSIER_SAUVEGARDE, folder_name)
+        folder_path = os.path.join(DOSSIER_DATA_APP, folder_name)
         remote_dest = f"{RCLONE_REMOTE_PATH}/{folder_name}"
         cmd = ["rclone", "copy", folder_path, remote_dest]
 
@@ -665,13 +828,13 @@ def envoyer_fichiers_rclone():
             erreurs.append(f"{folder_name}: {str(e)}")
 
     if len(erreurs) == 0:
-        msg_ok = f"Success! {succes_count} folder(s) sent to Cloud ({RCLONE_REMOTE_NAME})."
+        msg_ok = f"Success! {succes_count} folder(s) uploaded to Cloud ({RCLONE_REMOTE_NAME})."
         lbl_transfer_status.config(text=msg_ok, fg="#81c784")
         afficher_status(msg_ok, "#81c784")
     else:
-        msg_err = f"Transferred: {succes_count}/{len(dossiers_a_envoyer)}. Errors encountered."
+        msg_err = f"Transferred: {succes_count}/{len(dossiers_a_envoyer)}. Errors occurred."
         lbl_transfer_status.config(text=msg_err, fg="#e57373")
-        afficher_status(f"Rclone error during transfer: {erreurs[0]}", "#e57373")
+        afficher_status(f"Rclone error: {erreurs[0]}", "#e57373")
 
 
 # ==========================================
@@ -683,14 +846,14 @@ app.title("Acquisition Control")
 app.geometry("675x900")
 app.configure(bg="#1e1e2e")
 
-# Position Top-Right
 sw, sh = pyautogui.size()
 pos_x = sw - 700
 pos_y = 20
 app.geometry(f"+{pos_x}+{pos_y}")
 app.attributes('-topmost', True)
 
-# Dynamic Status Badge
+app.protocol("WM_DELETE_WINDOW", quitter_application)
+
 lbl_etat = tk.Label(
     app, text="STANDBY / READY",
     font=("Segoe UI", 16, "bold"), bg="#4caf50", fg="white",
@@ -744,20 +907,28 @@ lbl_saisie.pack(anchor=tk.W, padx=24, pady=(2, 2))
 
 entree_nom = tk.Entry(
     card_acq, font=("Segoe UI", 16), bg="#1e1e2e", fg="white",
-    insertbackground="white", bd=1, relief=tk.SOLID
+    insertbackground="white", bd=1, relief=tk.SOLID,
+    highlightthickness=1, highlightbackground="#414158", highlightcolor="#2196f3"
 )
-entree_nom.pack(fill=tk.X, padx=24, pady=6, ipady=6)
+entree_nom.pack(fill=tk.X, padx=24, pady=(4, 2), ipady=6)
+entree_nom.bind('<KeyRelease>', verifier_nom_dossier_existe)
 entree_nom.bind('<Return>', lancer_acquisition)
+
+lbl_err_nom = tk.Label(
+    card_acq, text="", font=("Segoe UI", 10, "italic"),
+    fg="#f44336", bg="#2b2b3d", anchor="w"
+)
+lbl_err_nom.pack(fill=tk.X, padx=24, pady=(0, 4))
 
 btn_acq = tk.Button(
     card_acq, text="Start Acquisition", command=lancer_acquisition,
     font=("Segoe UI", 15, "bold"), bg="#4caf50", fg="white", activebackground="#43a047",
     activeforeground="white", bd=0, pady=14, cursor="hand2"
 )
-btn_acq.pack(fill=tk.X, padx=24, pady=(10, 14))
+btn_acq.pack(fill=tk.X, padx=24, pady=(6, 14))
 
 
-# --- CARD 3: CLOUD TRANSFER (EXPANDABLE) ---
+# --- CARD 3: CLOUD TRANSFER ---
 card_cloud = tk.Frame(app, bg="#2b2b3d", bd=0)
 card_cloud.pack(fill=tk.X, padx=30, pady=6, ipady=8)
 
@@ -774,10 +945,8 @@ btn_cloud = tk.Button(
 )
 btn_cloud.pack(fill=tk.X, padx=24, pady=(6, 10))
 
-# Hidden Expandable Content Frame inside Card 3
 frame_cloud_content = tk.Frame(card_cloud, bg="#2b2b3d")
 
-# Check All / Check None Quick Selection Bar
 frame_select_bar = tk.Frame(frame_cloud_content, bg="#2b2b3d")
 frame_select_bar.pack(fill=tk.X, pady=(4, 8))
 
@@ -795,7 +964,6 @@ btn_none = tk.Button(
 )
 btn_none.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(5, 0))
 
-# Scrollable Container (Height = 220px)
 frame_scroll_box = tk.Frame(frame_cloud_content, bg="#1e1e2e", height=220)
 frame_scroll_box.pack(fill=tk.X, pady=6)
 frame_scroll_box.pack_propagate(False)
@@ -829,7 +997,7 @@ btn_rclone_upload = tk.Button(
 btn_rclone_upload.pack(fill=tk.X, pady=(4, 10))
 
 
-# --- STATUS / CONSOLE AREA ---
+# --- STATUS AREA ---
 lbl_status = tk.Label(
     app, text="", font=("Segoe UI", 12, "italic"),
     fg="#e0e0e0", bg="#1e1e2e", wraplength=580, justify=tk.CENTER
@@ -837,12 +1005,25 @@ lbl_status = tk.Label(
 lbl_status.pack(fill=tk.X, padx=30, pady=10)
 
 
-# --- FOOTER: OVERSIZED EXIT BUTTON ---
-btn_quitter = tk.Button(
-    app, text="EXIT APPLICATION", command=app.quit,
-    font=("Segoe UI", 15, "bold"), bg="#d32f2f", fg="white",
-    activebackground="#b71c1c", activeforeground="white", bd=0, pady=16, cursor="hand2"
+# --- FOOTER ---
+footer_frame = tk.Frame(app, bg="#1e1e2e")
+footer_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=30, pady=(10, 20))
+
+btn_shutdown_machine = tk.Button(
+    footer_frame, text="SHUTDOWN MACHINE", command=arreter_machine,
+    font=("Segoe UI", 13, "bold"), bg="#ff9800", fg="black",
+    activebackground="#f57c00", activeforeground="black", bd=0, pady=14, cursor="hand2"
 )
-btn_quitter.pack(side=tk.BOTTOM, fill=tk.X, padx=30, pady=(10, 20))
+btn_shutdown_machine.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+
+btn_quitter = tk.Button(
+    footer_frame, text="EXIT APPLICATION", command=quitter_application,
+    font=("Segoe UI", 13, "bold"), bg="#d32f2f", fg="white",
+    activebackground="#b71c1c", activeforeground="white", bd=0, pady=14, cursor="hand2"
+)
+btn_quitter.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(6, 0))
+
+# Lancement du rafraîchissement automatique à 5 secondes
+app.after(5000, rafraichir_automatique)
 
 app.mainloop()
