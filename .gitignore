@@ -1,0 +1,5 @@
+# acquisition data, never versioned
+data/
+data_app/
+__pycache__/
+.pytest_cache/
