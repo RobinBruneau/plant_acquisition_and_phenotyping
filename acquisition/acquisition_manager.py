@@ -3,6 +3,7 @@ import sys
 import json
 import subprocess
 import tkinter as tk
+from tkinter import messagebox
 import time
 from datetime import datetime, date
 from PIL import Image, ImageTk
@@ -11,6 +12,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 import glob
+import re
+import shutil
+import threading
 
 # ==========================================
 # CONFIGURATION
@@ -20,8 +24,10 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 DOSSIER_IMAGES = r"D:\data"
 
+# Local data folder at the repository root (../data),
+# where spec.txt and the copied images are stored
 DOSSIER_SAUVEGARDE = os.path.join(
-    BASE_DIR,
+    os.path.dirname(BASE_DIR),
     "data"
 )
 
@@ -31,20 +37,39 @@ FICHIER_EXECUTABLE = (
     r"\LemnaControlPhenoAIxpertPro.exe"
 )
 
+# Desktop shortcut used to start LemnaControl exactly
+# like a double-click (falls back to the exe if missing)
+RACCOURCI_EXECUTABLE = os.path.join(
+    os.path.expanduser("~"),
+    "Desktop",
+    "Lemna Control Pheno AIxpertPro.lnk"
+)
+
 # Calibration file
 FICHIER_CALIBRATION = os.path.join(
     BASE_DIR,
     "calibration_zones.json"
 )
 
-# Rclone configuration
-RCLONE_REMOTE_NAME = "geneva"
+# Image monitor
+# An acquisition is considered complete when it has
+# more than NB_IMAGES_MIN images and no new / modified
+# image for DELAI_STABLE_SEC seconds. Its images are
+# then copied to DOSSIER_SAUVEGARDE/<acq>/image/.
+# Late images are copied the same way.
+NB_IMAGES_MIN = 50
 
-RCLONE_REMOTE_FOLDER = "Acquisitions"
+DELAI_STABLE_SEC = 30
 
-RCLONE_REMOTE_PATH = (
-    f"{RCLONE_REMOTE_NAME}:{RCLONE_REMOTE_FOLDER}"
-)
+# Acquisitions followed: local folders touched in
+# the last FENETRE_SURVEILLANCE_SEC seconds
+FENETRE_SURVEILLANCE_SEC = 24 * 3600
+
+SOUS_DOSSIER_IMAGES = "image"
+
+# Copied images are renamed side_xxx / top_xxx,
+# xxx = angle / PAS_ANGLE_DEG (000 = 0 deg, 001 = 10 deg...)
+PAS_ANGLE_DEG = 10
 
 
 # ==========================================
@@ -137,11 +162,19 @@ machine_allumee = False
 
 switch_en_cours = False
 
-cloud_expanded = False
+# True while a switch or an acquisition is running
+process_en_cours = False
 
-dossiers_du_jour = []
+monitor_expanded = False
 
-items_selection = {}
+# acquisition name -> row Label in the monitor list
+lignes_monitor = {}
+
+# acquisition name -> last copy result
+# {"en_cours": bool, "copiees": int, "erreur": str}
+etat_copies = {}
+
+verrou_copies = threading.Lock()
 
 
 # ==========================================
@@ -1060,14 +1093,26 @@ def ouvrir_application():
 
     try:
 
-        subprocess.Popen(
-            [FICHIER_EXECUTABLE],
-            creationflags=(
-                subprocess.DETACHED_PROCESS
-                | subprocess.CREATE_NEW_PROCESS_GROUP
-            ),
-            close_fds=True
-        )
+        # Same as a double-click: open the desktop
+        # shortcut through the Windows shell (its
+        # working directory, arguments and options).
+        if os.path.isfile(RACCOURCI_EXECUTABLE):
+
+            os.startfile(
+                RACCOURCI_EXECUTABLE
+            )
+
+        # Fallback: start the exe from its own folder,
+        # like the shortcut does.
+        else:
+
+            subprocess.Popen(
+                [FICHIER_EXECUTABLE],
+                cwd=os.path.dirname(
+                    FICHIER_EXECUTABLE
+                ),
+                close_fds=True
+            )
 
         afficher_status(
             "LemnaControl PhenoAIxpertPro opened.",
@@ -1521,6 +1566,10 @@ def definir_etat_acquisition(
     en_cours
 ):
 
+    global process_en_cours
+
+    process_en_cours = en_cours
+
     if en_cours:
 
         lbl_etat.config(
@@ -1588,7 +1637,68 @@ def terminer_switch():
 
 
 # ==========================================
+# DETECT REAL MACHINE STATE
+#
+# Clicks System, then reads the buttons:
+#   Initialise green + Shutdown not red -> "off"
+#   Shutdown red + Initialise not green -> "on"
+# Anything else -> None (unknown)
+# ==========================================
+
+def detecter_etat_machine(
+    timeout_sec=3
+):
+
+    succes, _ = cliquer_zone(
+        "system"
+    )
+
+    if not succes:
+
+        return None
+
+    temps_debut = time.time()
+
+    while True:
+
+        time.sleep(
+            0.5
+        )
+
+        try:
+
+            app.update()
+
+        except Exception:
+
+            pass
+
+        init_vert = verifier_bouton_vert(
+            "initialise"
+        )
+
+        shut_rouge = verifier_bouton_rouge(
+            "shutdown"
+        )
+
+        if shut_rouge and not init_vert:
+
+            return "on"
+
+        if init_vert and not shut_rouge:
+
+            return "off"
+
+        if time.time() - temps_debut > timeout_sec:
+
+            return None
+
+
+# ==========================================
 # SWITCH MACHINE ON / OFF
+#
+# Returns True if the machine ends in the
+# requested state, False otherwise.
 # ==========================================
 
 def switch_machine():
@@ -1598,12 +1708,21 @@ def switch_machine():
     global switch_en_cours
 
     # --------------------------------------
-    # PREVENT DOUBLE CLICK
+    # PREVENT DOUBLE CLICK / CONCURRENT RUN
     # --------------------------------------
 
     if switch_en_cours:
 
-        return
+        return False
+
+    if process_en_cours:
+
+        afficher_status(
+            "Error: A process is already running.",
+            "#e57373"
+        )
+
+        return False
 
     # --------------------------------------
     # CALIBRATION REQUIRED
@@ -1616,7 +1735,7 @@ def switch_machine():
             "#e57373"
         )
 
-        return
+        return False
 
     switch_en_cours = True
 
@@ -1630,87 +1749,69 @@ def switch_machine():
         True
     )
 
-    app.update()
+    # --------------------------------------
+    # CHECK REAL STATE BEFORE ACTING
+    # --------------------------------------
+
+    afficher_status(
+        "Checking machine state...",
+        "#e0e0e0"
+    )
+
+    etat = detecter_etat_machine()
+
+    if etat is None:
+
+        afficher_status(
+            "Error: Could not determine machine state "
+            "(is LemnaControl open?).",
+            "#e57373"
+        )
+
+        terminer_switch()
+
+        return False
+
+    if etat == "on" and not machine_allumee:
+
+        machine_allumee = True
+
+        afficher_status(
+            "Machine was already ON. "
+            "State updated, nothing done.",
+            "#ffb74d"
+        )
+
+        terminer_switch()
+
+        return True
+
+    if etat == "off" and machine_allumee:
+
+        machine_allumee = False
+
+        afficher_status(
+            "Machine was already OFF. "
+            "State updated, nothing done.",
+            "#ffb74d"
+        )
+
+        terminer_switch()
+
+        return True
 
     # ======================================
-    # SWITCH ON
+    # SWITCH ON  (machine verified OFF:
+    # Initialise green, Shutdown not red)
     # ======================================
 
     if not machine_allumee:
 
-        # ----------------------------------
-        # STEP 1 - SYSTEM
-        # ----------------------------------
-
         afficher_status(
-            "Power ON: Clicking System...",
-            "#e0e0e0"
-        )
-
-        app.update()
-
-        succes, msg = cliquer_zone(
-            "system"
-        )
-
-        if not succes:
-
-            afficher_status(
-                f"Error clicking System: {msg}",
-                "#e57373"
-            )
-
-            terminer_switch()
-
-            return
-
-        time.sleep(
-            0.5
-        )
-
-        # ----------------------------------
-        # STEP 2 - INITIALISE GREEN
-        #
-        # IMPORTANT:
-        # If Initialise is ALREADY green,
-        # we continue immediately.
-        # ----------------------------------
-
-        afficher_status(
-            "Power ON: Checking Initialise "
-            "for green...",
-            "#e0e0e0"
-        )
-
-        app.update()
-
-        if not attendre_couleur_zone(
-            "initialise",
-            "vert",
-            timeout_sec=30
-        ):
-
-            afficher_status(
-                "Error: Initialise did not "
-                "turn green.",
-                "#e57373"
-            )
-
-            terminer_switch()
-
-            return
-
-        # ----------------------------------
-        # STEP 3 - CLICK INITIALISE
-        # ----------------------------------
-
-        afficher_status(
-            "Power ON: Initialise is green. "
+            "Power ON: Machine is OFF. "
             "Clicking Initialise...",
             "#e0e0e0"
         )
-
-        app.update()
 
         succes, msg = cliquer_zone(
             "initialise"
@@ -1725,25 +1826,17 @@ def switch_machine():
 
             terminer_switch()
 
-            return
+            return False
 
         time.sleep(
             0.5
         )
 
-        # ----------------------------------
-        # STEP 4 - SHUTDOWN RED
-        #
-        # Again, immediate check first.
-        # ----------------------------------
-
         afficher_status(
-            "Power ON: Checking Shutdown "
-            "for red...",
+            "Power ON: Waiting for Shutdown "
+            "to turn red...",
             "#e0e0e0"
         )
-
-        app.update()
 
         if not attendre_couleur_zone(
             "shutdown",
@@ -1759,188 +1852,148 @@ def switch_machine():
 
             terminer_switch()
 
-            return
-
-        # ----------------------------------
-        # MACHINE IS ON
-        # ----------------------------------
+            return False
 
         machine_allumee = True
-
-        btn_switch.config(
-            state=tk.NORMAL,
-            text="SWITCH OFF",
-            bg="#d32f2f",
-            fg="white",
-            activebackground="#b71c1c",
-            activeforeground="white"
-        )
 
         afficher_status(
             "Machine is ON.",
             "#81c784"
         )
 
-        definir_etat_acquisition(
-            False
+        terminer_switch()
+
+        return True
+
+    # ======================================
+    # SWITCH OFF  (machine verified ON:
+    # Shutdown red, Initialise not green)
+    # ======================================
+
+    afficher_status(
+        "Power OFF: Machine is ON. "
+        "Clicking Shutdown...",
+        "#e0e0e0"
+    )
+
+    succes, msg = cliquer_zone(
+        "shutdown"
+    )
+
+    if not succes:
+
+        afficher_status(
+            f"Error clicking Shutdown: {msg}",
+            "#e57373"
         )
 
-        switch_en_cours = False
+        terminer_switch()
+
+        return False
+
+    time.sleep(
+        0.5
+    )
+
+    afficher_status(
+        "Power OFF: Waiting for Initialise "
+        "to turn green...",
+        "#e0e0e0"
+    )
+
+    if not attendre_couleur_zone(
+        "initialise",
+        "vert",
+        timeout_sec=30
+    ):
+
+        afficher_status(
+            "Error: Initialise did not "
+            "turn green.",
+            "#e57373"
+        )
+
+        terminer_switch()
+
+        return False
+
+    machine_allumee = False
+
+    afficher_status(
+        "Machine is OFF.",
+        "#81c784"
+    )
+
+    terminer_switch()
+
+    return True
+
+
+# ==========================================
+# EXIT APPLICATION
+#
+# Switches the machine OFF first if it
+# is ON (after confirmation).
+# ==========================================
+
+def quitter_application():
+
+    global machine_allumee
+
+    if switch_en_cours or process_en_cours:
+
+        afficher_status(
+            "Cannot exit: a process is in progress.",
+            "#e57373"
+        )
 
         return
 
-    # ======================================
-    # SWITCH OFF
-    # ======================================
+    etat = None
 
-    else:
-
-        # ----------------------------------
-        # STEP 1 - SYSTEM
-        # ----------------------------------
+    if charger_zones():
 
         afficher_status(
-            "Power OFF: Clicking System...",
+            "Checking machine state before exit...",
             "#e0e0e0"
         )
 
-        app.update()
+        etat = detecter_etat_machine()
 
-        succes, msg = cliquer_zone(
-            "system"
-        )
+    if etat == "on" or (etat is None and machine_allumee):
 
-        if not succes:
+        # Machine ON: switch it OFF, then exit.
+        # If switch OFF fails, stay open.
+        machine_allumee = True
 
-            afficher_status(
-                f"Error clicking System: {msg}",
-                "#e57373"
+        if not switch_machine() or machine_allumee:
+
+            messagebox.showerror(
+                "Exit application",
+                "Switch OFF failed.\n"
+                "The application was not closed.",
+                parent=app
             )
-
-            terminer_switch()
 
             return
 
-        time.sleep(
-            0.5
-        )
+    elif etat is None:
 
-        # ----------------------------------
-        # STEP 2 - SHUTDOWN RED
-        #
-        # Immediate check included.
-        # ----------------------------------
-
-        afficher_status(
-            "Power OFF: Checking Shutdown "
-            "for red...",
-            "#e0e0e0"
-        )
-
-        app.update()
-
-        if not attendre_couleur_zone(
-            "shutdown",
-            "rouge",
-            timeout_sec=30
+        if not messagebox.askyesno(
+            "Exit application",
+            "Could not determine the machine state.\n\n"
+            "Exit anyway?",
+            parent=app
         ):
 
             afficher_status(
-                "Error: Shutdown did not "
-                "turn red.",
-                "#e57373"
+                "Exit cancelled.",
+                "#e0e0e0"
             )
-
-            terminer_switch()
 
             return
 
-        # ----------------------------------
-        # STEP 3 - CLICK SHUTDOWN
-        # ----------------------------------
-
-        afficher_status(
-            "Power OFF: Shutdown is red. "
-            "Clicking Shutdown...",
-            "#e0e0e0"
-        )
-
-        app.update()
-
-        succes, msg = cliquer_zone(
-            "shutdown"
-        )
-
-        if not succes:
-
-            afficher_status(
-                f"Error clicking Shutdown: {msg}",
-                "#e57373"
-            )
-
-            terminer_switch()
-
-            return
-
-        time.sleep(
-            0.5
-        )
-
-        # ----------------------------------
-        # STEP 4 - INITIALISE GREEN
-        #
-        # Immediate check included.
-        # ----------------------------------
-
-        afficher_status(
-            "Power OFF: Checking Initialise "
-            "for green...",
-            "#e0e0e0"
-        )
-
-        app.update()
-
-        if not attendre_couleur_zone(
-            "initialise",
-            "vert",
-            timeout_sec=30
-        ):
-
-            afficher_status(
-                "Error: Initialise did not "
-                "turn green.",
-                "#e57373"
-            )
-
-            terminer_switch()
-
-            return
-
-        # ----------------------------------
-        # MACHINE IS OFF
-        # ----------------------------------
-
-        machine_allumee = False
-
-        btn_switch.config(
-            state=tk.NORMAL,
-            text="SWITCH ON",
-            bg="#555555",
-            fg="white",
-            activebackground="#666666",
-            activeforeground="white"
-        )
-
-        afficher_status(
-            "Machine is OFF.",
-            "#81c784"
-        )
-
-        definir_etat_acquisition(
-            False
-        )
-
-        switch_en_cours = False
+    app.destroy()
 
 
 # ==========================================
@@ -1973,6 +2026,15 @@ def erreur_acquisition(
 def lancer_acquisition(
     event=None
 ):
+
+    if switch_en_cours or process_en_cours:
+
+        afficher_status(
+            "Error: A process is already running.",
+            "#e57373"
+        )
+
+        return
 
     nom_acq = entree_nom.get().strip()
 
@@ -2007,6 +2069,25 @@ def lancer_acquisition(
     # FOLDER CHECK
     # --------------------------------------
 
+    caracteres_interdits = set('<>:"/\\|?*')
+
+    if (
+        any(c in caracteres_interdits for c in nom_acq)
+        or nom_acq.endswith(".")
+        or nom_acq in (".", "..")
+    ):
+
+        afficher_status(
+            f"Error: Invalid acquisition name '{nom_acq}'. "
+            'Do not use < > : " / \\ | ? * '
+            "or a trailing dot.",
+            "#e57373"
+        )
+
+        entree_nom.focus_set()
+
+        return
+
     dossier_acq = os.path.join(
         DOSSIER_SAUVEGARDE,
         nom_acq
@@ -2019,6 +2100,26 @@ def lancer_acquisition(
         afficher_status(
             f"Error: Folder '{nom_acq}' "
             "already exists in ./data/.",
+            "#e57373"
+        )
+
+        entree_nom.focus_set()
+
+        return
+
+    # Images of a previous (possibly failed) run
+    # with the same name may already be in D:\data
+    if os.path.exists(
+        os.path.join(
+            DOSSIER_IMAGES,
+            nom_acq
+        )
+    ):
+
+        afficher_status(
+            f"Error: Folder '{nom_acq}' already exists "
+            f"in {DOSSIER_IMAGES} (images from a previous "
+            "acquisition). Choose another name.",
             "#e57373"
         )
 
@@ -2591,20 +2692,20 @@ def afficher_status(
 
 
 # ==========================================
-# CLOUD
+# IMAGE MONITOR - FOLDERS TO FOLLOW
 # ==========================================
 
-def recuperer_dossiers_du_jour():
-
-    dossiers_aujourdhui = []
-
-    aujourdhui = date.today()
+def recuperer_acquisitions_recentes():
 
     if not os.path.exists(
         DOSSIER_SAUVEGARDE
     ):
 
-        return dossiers_aujourdhui
+        return []
+
+    limite = time.time() - FENETRE_SURVEILLANCE_SEC
+
+    resultat = []
 
     for item in os.listdir(
         DOSSIER_SAUVEGARDE
@@ -2615,36 +2716,553 @@ def recuperer_dossiers_du_jour():
             item
         )
 
-        if os.path.isdir(
+        if not os.path.isdir(
             item_path
         ):
 
-            mtime = date.fromtimestamp(
-                os.path.getmtime(
-                    item_path
-                )
+            continue
+
+        mtimes = [
+            os.path.getmtime(item_path)
+        ]
+
+        dossier_img = os.path.join(
+            item_path,
+            SOUS_DOSSIER_IMAGES
+        )
+
+        if os.path.isdir(dossier_img):
+
+            mtimes.append(
+                os.path.getmtime(dossier_img)
             )
 
-            if mtime == aujourdhui:
+        if max(mtimes) >= limite:
 
-                dossiers_aujourdhui.append(
-                    item
+            resultat.append(
+                (os.path.getctime(item_path), item)
+            )
+
+    # Most recent acquisition first. On Windows getctime
+    # is the folder creation time, so the order stays
+    # stable while images are being copied.
+    resultat.sort(reverse=True)
+
+    return [item for _, item in resultat]
+
+
+# ==========================================
+# IMAGE MONITOR - SCAN SOURCE IMAGES
+#
+# Images are written by LemnaControl to
+# DOSSIER_IMAGES/<acq>/<date>/...
+# ==========================================
+
+# Full-size image name written by LemnaControl, e.g.
+# part-0-180.RGB_cameraSide^center^OP_side_010.2026-10-01_142952.png
+# -> camera "side", angle 10, run "2026-10-01_142952"
+# Thumbnails (TN/ folder, names ending in _80, _125...)
+# do not match and are ignored.
+MOTIF_IMAGE = re.compile(
+    r"_(side|top)_(\d+)\.(\d{4}-\d{2}-\d{2}_\d{6})"
+    r"\.(png|jpe?g)$",
+    re.IGNORECASE
+)
+
+
+def nom_image_dest(
+    camera,
+    angle,
+    extension
+):
+
+    # side_000 = 0 deg, side_001 = 10 deg, ...
+    index = int(angle) // PAS_ANGLE_DEG
+
+    return (
+        f"{camera.lower()}_{index:03d}"
+        f".{extension.lower()}"
+    )
+
+
+def lister_images_source(
+    nom_acq
+):
+
+    """Returns (images, last_update).
+
+    images: list of (dest_name, path, size, mtime),
+    one per camera/angle; if an angle was recorded
+    several times, the most recent run wins.
+    last_update: newest mtime of any file in the
+    folder (thumbnails included), or None.
+    """
+
+    dossier = os.path.join(
+        DOSSIER_IMAGES,
+        nom_acq
+    )
+
+    choisies = {}
+
+    derniere_maj = None
+
+    if not os.path.isdir(
+        dossier
+    ):
+
+        return [], None
+
+    for racine, sous_dossiers, fichiers in os.walk(
+        dossier
+    ):
+
+        # Thumbnails folder: never copied
+        miniatures = (
+            os.path.basename(racine).upper() == "TN"
+        )
+
+        for nom in fichiers:
+
+            chemin = os.path.join(
+                racine,
+                nom
+            )
+
+            try:
+
+                st = os.stat(chemin)
+
+            except OSError:
+
+                continue
+
+            if derniere_maj is None or st.st_mtime > derniere_maj:
+
+                derniere_maj = st.st_mtime
+
+            if miniatures:
+
+                continue
+
+            m = MOTIF_IMAGE.search(
+                nom
+            )
+
+            if not m:
+
+                continue
+
+            camera, angle, run, ext = m.groups()
+
+            dest_name = nom_image_dest(
+                camera,
+                angle,
+                ext
+            )
+
+            precedent = choisies.get(
+                dest_name
+            )
+
+            if precedent is None or run > precedent[0]:
+
+                choisies[dest_name] = (
+                    run,
+                    chemin,
+                    st.st_size,
+                    st.st_mtime
                 )
 
-    return sorted(
-        dossiers_aujourdhui
+    images = [
+        (dest_name, chemin, taille, mtime)
+        for dest_name, (_, chemin, taille, mtime)
+        in sorted(choisies.items())
+    ]
+
+    return images, derniere_maj
+
+
+def images_a_copier(
+    nom_acq,
+    images
+):
+
+    dossier_dest = os.path.join(
+        DOSSIER_SAUVEGARDE,
+        nom_acq,
+        SOUS_DOSSIER_IMAGES
+    )
+
+    a_copier = []
+
+    for nom, chemin, taille, mtime in images:
+
+        dest = os.path.join(
+            dossier_dest,
+            nom
+        )
+
+        # Already copied from this exact source file
+        # (copy2 keeps the modification time)
+        try:
+
+            st = os.stat(dest)
+
+            if (
+                st.st_size == taille
+                and abs(st.st_mtime - mtime) < 2
+            ):
+
+                continue
+
+        except OSError:
+
+            pass
+
+        a_copier.append(
+            (chemin, dest)
+        )
+
+    return a_copier
+
+
+# ==========================================
+# IMAGE MONITOR - COPY (background thread)
+# ==========================================
+
+def _copier_images_thread(
+    nom_acq,
+    a_copier
+):
+
+    copiees = 0
+
+    erreur = ""
+
+    try:
+
+        os.makedirs(
+            os.path.join(
+                DOSSIER_SAUVEGARDE,
+                nom_acq,
+                SOUS_DOSSIER_IMAGES
+            ),
+            exist_ok=True
+        )
+
+        for chemin, dest in a_copier:
+
+            tmp = dest + ".part"
+
+            shutil.copy2(
+                chemin,
+                tmp
+            )
+
+            os.replace(
+                tmp,
+                dest
+            )
+
+            copiees += 1
+
+    except Exception as e:
+
+        erreur = str(e)
+
+    with verrou_copies:
+
+        precedent = etat_copies.get(
+            nom_acq,
+            {}
+        )
+
+        etat_copies[nom_acq] = {
+            "en_cours": False,
+            "copiees": copiees,
+            "deja_copie": precedent.get("deja_copie", False),
+            "erreur": erreur,
+            "nouveau": True
+        }
+
+
+def lancer_copie(
+    nom_acq,
+    a_copier
+):
+
+    with verrou_copies:
+
+        precedent = etat_copies.get(
+            nom_acq,
+            {}
+        )
+
+        if precedent.get("en_cours"):
+
+            return
+
+        etat_copies[nom_acq] = {
+            "en_cours": True,
+            "copiees": 0,
+            "deja_copie": precedent.get("deja_copie", False)
+            or precedent.get("copiees", 0) > 0,
+            "erreur": "",
+            "nouveau": False
+        }
+
+    threading.Thread(
+        target=_copier_images_thread,
+        args=(nom_acq, a_copier),
+        daemon=True
+    ).start()
+
+
+# ==========================================
+# IMAGE MONITOR - ONE ACQUISITION
+#
+# Returns (text, color) for its row.
+# ==========================================
+
+def traiter_acquisition(
+    nom_acq
+):
+
+    images, derniere_maj = lister_images_source(
+        nom_acq
+    )
+
+    nb = len(images)
+
+    with verrou_copies:
+
+        copie = dict(
+            etat_copies.get(
+                nom_acq,
+                {}
+            )
+        )
+
+        if copie.get("nouveau"):
+
+            etat_copies[nom_acq]["nouveau"] = False
+
+    # Report a finished copy in the status bar
+    if copie.get("nouveau"):
+
+        if copie.get("erreur"):
+
+            afficher_status(
+                f"Copy error for '{nom_acq}': "
+                f"{copie['erreur']}",
+                "#e57373"
+            )
+
+        elif copie.get("copiees"):
+
+            if copie.get("deja_copie"):
+
+                afficher_status(
+                    f"'{nom_acq}': {copie['copiees']} late "
+                    "image(s) copied to ./data/.",
+                    "#81c784"
+                )
+
+            else:
+
+                afficher_status(
+                    f"'{nom_acq}': {copie['copiees']} "
+                    "image(s) copied to ./data/.",
+                    "#81c784"
+                )
+
+    if copie.get("en_cours"):
+
+        return (
+            f"{nom_acq}    {nb} img    COPYING...",
+            "#64b5f6"
+        )
+
+    if nb == 0:
+
+        return (
+            f"{nom_acq}    0 img    waiting for images",
+            "#78909c"
+        )
+
+    age = time.time() - derniere_maj
+
+    if nb <= NB_IMAGES_MIN or age < DELAI_STABLE_SEC:
+
+        if nb <= NB_IMAGES_MIN:
+
+            detail = f"need > {NB_IMAGES_MIN}"
+
+        else:
+
+            reste = int(DELAI_STABLE_SEC - age)
+
+            detail = f"stable in {reste // 60}:{reste % 60:02d}"
+
+        return (
+            f"{nom_acq}    {nb} img    UPLOADING "
+            f"(last image {int(age)} s ago, {detail})",
+            "#ffb74d"
+        )
+
+    # Complete: copy missing / late images
+    a_copier = images_a_copier(
+        nom_acq,
+        images
+    )
+
+    if a_copier:
+
+        lancer_copie(
+            nom_acq,
+            a_copier
+        )
+
+        return (
+            f"{nom_acq}    {nb} img    COPYING "
+            f"{len(a_copier)} image(s)...",
+            "#64b5f6"
+        )
+
+    if copie.get("erreur"):
+
+        return (
+            f"{nom_acq}    {nb} img    COPY ERROR",
+            "#e57373"
+        )
+
+    return (
+        f"{nom_acq}    {nb} img    COMPLETE - copied",
+        "#81c784"
     )
 
 
 # ==========================================
-# CLOUD EXPANSION
+# IMAGE MONITOR - PERIODIC REFRESH
+#
+# Runs every 5 s, even when the list is
+# closed, so copies always happen.
 # ==========================================
 
-def toggle_cloud_expansion():
+def actualiser_monitor():
 
-    global cloud_expanded
+    try:
 
-    if not cloud_expanded:
+        acquisitions = recuperer_acquisitions_recentes()
+
+        if monitor_expanded and (
+            list(lignes_monitor.keys()) != acquisitions
+        ):
+
+            construire_liste_monitor(
+                acquisitions
+            )
+
+        for nom_acq in acquisitions:
+
+            texte, couleur = traiter_acquisition(
+                nom_acq
+            )
+
+            lbl = lignes_monitor.get(
+                nom_acq
+            )
+
+            if lbl is not None:
+
+                lbl.config(
+                    text=texte,
+                    fg=couleur
+                )
+
+    except Exception as e:
+
+        afficher_status(
+            f"Image monitor error: {e}",
+            "#e57373"
+        )
+
+    app.after(
+        5000,
+        actualiser_monitor
+    )
+
+
+def construire_liste_monitor(
+    acquisitions
+):
+
+    lignes_monitor.clear()
+
+    for widget in (
+        scrollable_frame.winfo_children()
+    ):
+
+        widget.destroy()
+
+    if not acquisitions:
+
+        tk.Label(
+            scrollable_frame,
+            text=(
+                "No acquisition in the last 24 h."
+            ),
+            font=(
+                "Segoe UI",
+                F(12),
+                "italic"
+            ),
+            fg="#8a8a9e",
+            bg="#1e1e2e"
+        ).pack(
+            padx=P(20),
+            pady=P(20)
+        )
+
+        return
+
+    for nom_acq in acquisitions:
+
+        lbl = tk.Label(
+            scrollable_frame,
+            text=nom_acq,
+            font=(
+                "Segoe UI",
+                F(12),
+                "bold"
+            ),
+            anchor="w",
+            justify=tk.LEFT,
+            fg="#e0e0e0",
+            bg="#252538",
+            padx=P(10),
+            pady=P(8)
+        )
+
+        lbl.pack(
+            fill=tk.X,
+            padx=P(8),
+            pady=P(4)
+        )
+
+        lignes_monitor[nom_acq] = lbl
+
+
+# ==========================================
+# IMAGE MONITOR - SHOW / HIDE LIST
+# ==========================================
+
+def toggle_monitor_expansion():
+
+    global monitor_expanded
+
+    if not monitor_expanded:
 
         app.geometry(
             f"{BASE_WIDTH}x"
@@ -2652,9 +3270,26 @@ def toggle_cloud_expansion():
             f"{POS_X}+{POS_Y}"
         )
 
-        charger_fichiers_cloud_inline()
+        monitor_expanded = True
 
-        frame_cloud_content.pack(
+        acquisitions = recuperer_acquisitions_recentes()
+
+        construire_liste_monitor(
+            acquisitions
+        )
+
+        for nom_acq in acquisitions:
+
+            texte, couleur = traiter_acquisition(
+                nom_acq
+            )
+
+            lignes_monitor[nom_acq].config(
+                text=texte,
+                fg=couleur
+            )
+
+        frame_monitor_content.pack(
             fill=tk.BOTH,
             expand=True,
             padx=P(24),
@@ -2664,15 +3299,13 @@ def toggle_cloud_expansion():
             )
         )
 
-        btn_cloud.config(
-            text="Close Cloud Transfer"
+        btn_monitor.config(
+            text="Hide Image Monitor"
         )
-
-        cloud_expanded = True
 
     else:
 
-        frame_cloud_content.pack_forget()
+        frame_monitor_content.pack_forget()
 
         app.geometry(
             f"{BASE_WIDTH}x"
@@ -2680,374 +3313,11 @@ def toggle_cloud_expansion():
             f"{POS_X}+{POS_Y}"
         )
 
-        btn_cloud.config(
-            text="Save to Cloud"
+        btn_monitor.config(
+            text="Show Image Monitor"
         )
 
-        cloud_expanded = False
-
-
-# ==========================================
-# CLOUD ITEM SELECTION
-# ==========================================
-
-def toggle_item(
-    folder_name
-):
-
-    items_selection[
-        folder_name
-    ]["selected"] = not items_selection[
-        folder_name
-    ]["selected"]
-
-    maj_style_bouton_item(
-        folder_name
-    )
-
-
-def select_all_items():
-
-    for folder_name in items_selection:
-
-        items_selection[
-            folder_name
-        ]["selected"] = True
-
-        maj_style_bouton_item(
-            folder_name
-        )
-
-
-def select_none_items():
-
-    for folder_name in items_selection:
-
-        items_selection[
-            folder_name
-        ]["selected"] = False
-
-        maj_style_bouton_item(
-            folder_name
-        )
-
-
-
-# ==========================================
-# CLOUD ITEM STYLE
-# ==========================================
-
-def actualiser_compteurs_png():
-
-    for folder_name in list(items_selection.keys()):
-
-        info = items_selection.get(
-            folder_name
-        )
-
-        if info and info.get("button"):
-
-            maj_style_bouton_item(
-                folder_name
-            )
-
-    # Re-run every 5 seconds
-    app.after(
-        5000,
-        actualiser_compteurs_png
-    )
-
-def maj_style_bouton_item(folder_name):
-
-    info = items_selection[
-        folder_name
-    ]
-
-    btn = info[
-        "button"
-    ]
-
-    is_sel = info[
-        "selected"
-    ]
-
-    # --------------------------------------
-    # COUNT PNG
-    # --------------------------------------
-
-    nb_images = compter_images_png(
-        folder_name
-    )
-
-    # --------------------------------------
-    # BUTTON TEXT
-    # --------------------------------------
-
-    if is_sel:
-
-        btn.config(
-            text=(
-                f"  [X]   {folder_name}/"
-                f"    ({nb_images} PNG)"
-            ),
-            bg="#2e7d32",
-            fg="#ffffff",
-            activebackground="#388e3c",
-            activeforeground="#ffffff",
-            relief=tk.SOLID,
-            bd=max(
-                1,
-                P(1)
-            ),
-            highlightbackground="#4caf50"
-        )
-
-    else:
-
-        btn.config(
-            text=(
-                f"  [  ]   {folder_name}/"
-                f"    ({nb_images} PNG)"
-            ),
-            bg="#252538",
-            fg="#78909c",
-            activebackground="#2c2c42",
-            activeforeground="#b0bec5",
-            relief=tk.FLAT,
-            bd=0
-        )
-
-
-
-# ==========================================
-# LOAD CLOUD FOLDERS
-# ==========================================
-
-def compter_images_png(folder_name):
-
-    pattern = os.path.join(
-        DOSSIER_IMAGES,
-        folder_name,
-        "*",
-        "*.png"
-    )
-
-    try:
-
-        fichiers_png = glob.glob(
-            pattern
-        )
-
-        return len(
-            fichiers_png
-        )
-
-    except Exception:
-        return 0
-
-def charger_fichiers_cloud_inline():
-
-    global items_selection
-
-    global dossiers_du_jour
-
-    items_selection.clear()
-
-    for widget in (
-        scrollable_frame.winfo_children()
-    ):
-
-        widget.destroy()
-
-    dossiers_du_jour = (
-        recuperer_dossiers_du_jour()
-    )
-
-    if not dossiers_du_jour:
-
-        lbl_empty = tk.Label(
-            scrollable_frame,
-            text=(
-                "No acquisition folders "
-                "recorded today."
-            ),
-            font=(
-                "Segoe UI",
-                F(12),
-                "italic"
-            ),
-            fg="#8a8a9e",
-            bg="#1e1e2e"
-        )
-
-        lbl_empty.pack(
-            padx=P(20),
-            pady=P(20)
-        )
-
-    else:
-
-        for folder_name in (
-            dossiers_du_jour
-        ):
-
-            items_selection[
-                folder_name
-            ] = {
-                "selected": True,
-                "button": None
-            }
-
-            btn_item = tk.Button(
-                scrollable_frame,
-                font=(
-                    "Segoe UI",
-                    F(12),
-                    "bold"
-                ),
-                anchor="w",
-                pady=P(8),
-                cursor="hand2",
-                command=lambda f=folder_name:
-                    toggle_item(f)
-            )
-
-            btn_item.pack(
-                fill=tk.X,
-                padx=P(8),
-                pady=P(4)
-            )
-
-            items_selection[
-                folder_name
-            ]["button"] = btn_item
-
-            maj_style_bouton_item(
-                folder_name
-            )
-
-
-# ==========================================
-# RCLONE UPLOAD
-# ==========================================
-
-def envoyer_fichiers_rclone():
-
-    dossiers_a_envoyer = [
-        f
-        for f, info
-        in items_selection.items()
-        if info["selected"]
-    ]
-
-    if not dossiers_a_envoyer:
-
-        lbl_transfer_status.config(
-            text=(
-                "Please select at least one folder."
-            ),
-            fg="#e57373"
-        )
-
-        return
-
-    lbl_transfer_status.config(
-        text=(
-            "Uploading folders via rclone "
-            f"to '{RCLONE_REMOTE_PATH}'..."
-        ),
-        fg="#ffb74d"
-    )
-
-    app.update()
-
-    succes_count = 0
-
-    erreurs = []
-
-    for folder_name in (
-        dossiers_a_envoyer
-    ):
-
-        folder_path = os.path.join(
-            DOSSIER_SAUVEGARDE,
-            folder_name
-        )
-
-        remote_dest = (
-            f"{RCLONE_REMOTE_PATH}/"
-            f"{folder_name}"
-        )
-
-        cmd = [
-            "rclone",
-            "copy",
-            folder_path,
-            remote_dest
-        ]
-
-        try:
-
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True
-            )
-
-            if result.returncode == 0:
-
-                succes_count += 1
-
-            else:
-
-                erreurs.append(
-                    f"{folder_name}: "
-                    f"{result.stderr.strip()}"
-                )
-
-        except Exception as e:
-
-            erreurs.append(
-                f"{folder_name}: {str(e)}"
-            )
-
-    if len(erreurs) == 0:
-
-        msg_ok = (
-            f"Success! {succes_count} "
-            "folder(s) sent to Cloud "
-            f"({RCLONE_REMOTE_NAME})."
-        )
-
-        lbl_transfer_status.config(
-            text=msg_ok,
-            fg="#81c784"
-        )
-
-        afficher_status(
-            msg_ok,
-            "#81c784"
-        )
-
-    else:
-
-        msg_err = (
-            f"Transferred: "
-            f"{succes_count}/"
-            f"{len(dossiers_a_envoyer)}. "
-            "Errors encountered."
-        )
-
-        lbl_transfer_status.config(
-            text=msg_err,
-            fg="#e57373"
-        )
-
-        afficher_status(
-            "Rclone error during transfer: "
-            f"{erreurs[0]}",
-            "#e57373"
-        )
+        monitor_expanded = False
 
 
 # ==========================================
@@ -3406,8 +3676,11 @@ lbl_saisie.pack(
 )
 
 
+var_nom = tk.StringVar()
+
 entree_nom = tk.Entry(
     card_acq,
+    textvariable=var_nom,
     font=(
         "Segoe UI",
         F(16)
@@ -3416,8 +3689,44 @@ entree_nom = tk.Entry(
     fg="white",
     insertbackground="white",
     bd=1,
-    relief=tk.SOLID
+    relief=tk.SOLID,
+    highlightthickness=2,
+    highlightbackground="#1e1e2e",
+    highlightcolor="#1e1e2e"
 )
+
+
+def verifier_nom(*_):
+    """Color the name field: green if usable, red if it
+    already exists (or contains forbidden characters)."""
+
+    nom = var_nom.get().strip()
+
+    if not nom:
+        couleur_texte = "white"
+        couleur_bord = "#1e1e2e"
+
+    elif (
+        any(c in '<>:"/\\|?*' for c in nom)
+        or nom.endswith(".")
+        or os.path.exists(os.path.join(DOSSIER_SAUVEGARDE, nom))
+        or os.path.exists(os.path.join(DOSSIER_IMAGES, nom))
+    ):
+        couleur_texte = "#e57373"
+        couleur_bord = "#e57373"
+
+    else:
+        couleur_texte = "#81c784"
+        couleur_bord = "#81c784"
+
+    entree_nom.config(
+        fg=couleur_texte,
+        highlightbackground=couleur_bord,
+        highlightcolor=couleur_bord
+    )
+
+
+var_nom.trace_add("write", verifier_nom)
 
 entree_nom.pack(
     fill=tk.X,
@@ -3461,16 +3770,16 @@ btn_acq.pack(
 
 
 # ==========================================
-# CARD 4 - CLOUD TRANSFER
+# CARD 4 - IMAGE MONITOR
 # ==========================================
 
-card_cloud = tk.Frame(
+card_monitor = tk.Frame(
     app,
     bg="#2b2b3d",
     bd=0
 )
 
-card_cloud.pack(
+card_monitor.pack(
     fill=tk.X,
     padx=P(30),
     pady=P(6),
@@ -3478,9 +3787,9 @@ card_cloud.pack(
 )
 
 
-lbl_card3 = tk.Label(
-    card_cloud,
-    text="CLOUD TRANSFER",
+lbl_card_monitor = tk.Label(
+    card_monitor,
+    text="IMAGE MONITOR",
     font=(
         "Segoe UI",
         F(12),
@@ -3490,7 +3799,7 @@ lbl_card3 = tk.Label(
     bg="#2b2b3d"
 )
 
-lbl_card3.pack(
+lbl_card_monitor.pack(
     anchor=tk.W,
     padx=P(24),
     pady=(
@@ -3500,10 +3809,10 @@ lbl_card3.pack(
 )
 
 
-btn_cloud = tk.Button(
-    card_cloud,
-    text="Save to Cloud",
-    command=toggle_cloud_expansion,
+btn_monitor = tk.Button(
+    card_monitor,
+    text="Show Image Monitor",
+    command=toggle_monitor_expansion,
     font=(
         "Segoe UI",
         F(14),
@@ -3518,7 +3827,7 @@ btn_cloud = tk.Button(
     cursor="hand2"
 )
 
-btn_cloud.pack(
+btn_monitor.pack(
     fill=tk.X,
     padx=P(24),
     pady=(
@@ -3529,97 +3838,49 @@ btn_cloud.pack(
 
 
 # ==========================================
-# CLOUD EXPANDED CONTENT
+# MONITOR EXPANDED CONTENT
 # ==========================================
 
-frame_cloud_content = tk.Frame(
-    card_cloud,
+frame_monitor_content = tk.Frame(
+    card_monitor,
     bg="#2b2b3d"
 )
 
 
-# ==========================================
-# CHECK ALL / NONE
-# ==========================================
-
-frame_select_bar = tk.Frame(
-    frame_cloud_content,
-    bg="#2b2b3d"
+lbl_monitor_info = tk.Label(
+    frame_monitor_content,
+    text=(
+        f"Complete = more than {NB_IMAGES_MIN} images and "
+        f"no new image for {DELAI_STABLE_SEC} s. "
+        "Complete acquisitions (and late images) are "
+        "copied automatically to ./data/<acq>/image/."
+    ),
+    font=(
+        "Segoe UI",
+        F(11),
+        "italic"
+    ),
+    fg="#8a8a9e",
+    bg="#2b2b3d",
+    wraplength=P(540),
+    justify=tk.LEFT
 )
 
-frame_select_bar.pack(
+lbl_monitor_info.pack(
     fill=tk.X,
     pady=(
         P(4),
-        P(8)
-    )
-)
-
-
-btn_all = tk.Button(
-    frame_select_bar,
-    text="[X] Check All",
-    command=select_all_items,
-    font=(
-        "Segoe UI",
-        F(14),
-        "bold"
-    ),
-    bg="#3a3a52",
-    fg="#e0e0e0",
-    activebackground="#4a4a68",
-    activeforeground="white",
-    bd=0,
-    pady=P(8),
-    cursor="hand2"
-)
-
-btn_all.pack(
-    side=tk.LEFT,
-    fill=tk.X,
-    expand=True,
-    padx=(
-        0,
-        P(5)
-    )
-)
-
-
-btn_none = tk.Button(
-    frame_select_bar,
-    text="[ ] Check None",
-    command=select_none_items,
-    font=(
-        "Segoe UI",
-        F(14),
-        "bold"
-    ),
-    bg="#3a3a52",
-    fg="#e0e0e0",
-    activebackground="#4a4a68",
-    activeforeground="white",
-    bd=0,
-    pady=P(8),
-    cursor="hand2"
-)
-
-btn_none.pack(
-    side=tk.RIGHT,
-    fill=tk.X,
-    expand=True,
-    padx=(
-        P(5),
-        0
+        P(4)
     )
 )
 
 
 # ==========================================
-# SCROLLABLE CLOUD LIST
+# SCROLLABLE MONITOR LIST
 # ==========================================
 
 frame_scroll_box = tk.Frame(
-    frame_cloud_content,
+    frame_monitor_content,
     bg="#1e1e2e",
     height=int(
         220 * SCALE
@@ -3692,58 +3953,6 @@ scrollbar.pack(
 
 
 # ==========================================
-# CLOUD STATUS
-# ==========================================
-
-lbl_transfer_status = tk.Label(
-    frame_cloud_content,
-    text="",
-    font=(
-        "Segoe UI",
-        F(14),
-        "italic"
-    ),
-    fg="#81c784",
-    bg="#2b2b3d"
-)
-
-lbl_transfer_status.pack(
-    pady=P(4)
-)
-
-
-# ==========================================
-# RCLONE UPLOAD BUTTON
-# ==========================================
-
-btn_rclone_upload = tk.Button(
-    frame_cloud_content,
-    text="Upload Selected via Rclone",
-    command=envoyer_fichiers_rclone,
-    font=(
-        "Segoe UI",
-        F(13),
-        "bold"
-    ),
-    bg="#4caf50",
-    fg="white",
-    activebackground="#43a047",
-    activeforeground="white",
-    bd=0,
-    pady=P(12),
-    cursor="hand2"
-)
-
-btn_rclone_upload.pack(
-    fill=tk.X,
-    pady=(
-        P(4),
-        P(10)
-    )
-)
-
-
-# ==========================================
 # STATUS / CONSOLE
 # ==========================================
 
@@ -3775,7 +3984,7 @@ lbl_status.pack(
 btn_quitter = tk.Button(
     app,
     text="EXIT APPLICATION",
-    command=app.quit,
+    command=quitter_application,
     font=(
         "Segoe UI",
         F(15),
@@ -3802,13 +4011,18 @@ btn_quitter.pack(
 
 
 app.after(
-    5000,
-    actualiser_compteurs_png
+    2000,
+    actualiser_monitor
 )
 
 
 # ==========================================
 # START APPLICATION
 # ==========================================
+
+app.protocol(
+    "WM_DELETE_WINDOW",
+    quitter_application
+)
 
 app.mainloop()
