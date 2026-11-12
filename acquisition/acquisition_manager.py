@@ -53,11 +53,11 @@ FICHIER_CALIBRATION = os.path.join(
 
 # Image monitor
 # An acquisition is considered complete when it has
-# more than NB_IMAGES_MIN images and no new / modified
-# image for DELAI_STABLE_SEC seconds. Its images are
-# then copied to DOSSIER_SAUVEGARDE/<acq>/image/.
+# at least one image and no new / modified image for
+# DELAI_STABLE_SEC seconds, whatever the number of
+# images (some may be missing). Its images are then
+# copied to DOSSIER_SAUVEGARDE/<acq>/image/.
 # Late images are copied the same way.
-NB_IMAGES_MIN = 50
 
 DELAI_STABLE_SEC = 30
 
@@ -3093,17 +3093,11 @@ def traiter_acquisition(
 
     age = time.time() - derniere_maj
 
-    if nb <= NB_IMAGES_MIN or age < DELAI_STABLE_SEC:
+    if age < DELAI_STABLE_SEC:
 
-        if nb <= NB_IMAGES_MIN:
+        reste = int(DELAI_STABLE_SEC - age)
 
-            detail = f"need > {NB_IMAGES_MIN}"
-
-        else:
-
-            reste = int(DELAI_STABLE_SEC - age)
-
-            detail = f"stable in {reste // 60}:{reste % 60:02d}"
+        detail = f"stable in {reste // 60}:{reste % 60:02d}"
 
         return (
             f"{nom_acq}    {nb} img    UPLOADING "
@@ -3850,8 +3844,8 @@ frame_monitor_content = tk.Frame(
 lbl_monitor_info = tk.Label(
     frame_monitor_content,
     text=(
-        f"Complete = more than {NB_IMAGES_MIN} images and "
-        f"no new image for {DELAI_STABLE_SEC} s. "
+        f"Complete = no new image for {DELAI_STABLE_SEC} s "
+        "(missing images allowed). "
         "Complete acquisitions (and late images) are "
         "copied automatically to ./data/<acq>/image/."
     ),
